@@ -1,0 +1,10 @@
+{
+  "firestore": {
+    "database": "popo-flow",
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "bucket": "popo-flow.firebasestorage.app",
+    "rules": "storage.rules"
+  }
+}

@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// popo — Firebase Storage security rules
+//
+// Scope: audio files under /audio/{uid}/** are owned by that user.
+// A user can read and write ONLY their own audio files.
+// Unauthenticated requests are rejected outright.
+//
+// Path layout:
+//   audio/{userId}/{sessionId}.wav
+//
+// Deploy via:
+//   firebase deploy --project popo-flow --only storage
+//
+// The bucket is gs://popo-flow.firebasestorage.app (asia-south1).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /audio/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+
+    // Everything else is denied.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

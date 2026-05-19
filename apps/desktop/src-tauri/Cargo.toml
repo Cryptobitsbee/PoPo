@@ -1,0 +1,113 @@
+[package]
+name = "popo"
+version = "0.1.0"
+description = "popo — system-wide AI voice dictation for Windows"
+authors = ["popo"]
+edition = "2021"
+rust-version = "1.80"
+
+# The `_lib` suffix may seem redundant but it is necessary to make the
+# lib name unique from the binary name on Windows (where the binary is
+# `popo.exe` and the staticlib would clash).
+[lib]
+name = "popo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "devtools"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification    = "2"
+tauri-plugin-fs              = "2"
+tauri-plugin-dialog          = "2"
+tauri-plugin-opener          = "2"
+tauri-plugin-autostart       = "2"
+tauri-plugin-single-instance = "2"
+
+# Audio capture. Wired in Phase 2 item [6].
+# (Resampling is hand-rolled in gcp/chirp.rs; rubato was removed after
+# its FftFixedInOut chunk-size quirks caused runtime panics — see
+# Session 15 notes.)
+cpal = "0.15"
+
+# GCP Speech-to-Text v2 gRPC. Phase 2 [6] polish: real Chirp streaming.
+#
+# `googleapis-tonic-google-cloud-speech-v2` ships pre-compiled tonic
+# bindings for speech.googleapis.com v2. We do NOT need protoc on the
+# developer's machine because no .proto files are compiled here.
+#
+# tls-ring enables TLS via rustls + ring (no OpenSSL), matching what
+# gcp_auth uses so we don't pull in two crypto backends.
+tonic      = { version = "0.14", features = ["tls-ring", "tls-native-roots", "transport"] }
+tonic-prost = "0.14"
+prost      = "0.14"
+prost-types = "0.14"
+googleapis-tonic-google-cloud-speech-v2 = "0.34"
+gcp_auth   = "0.12"
+hyper      = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+http       = "1"
+tower      = "0.5"
+futures    = "0.3"
+
+# Async runtime.
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+
+# Serde + JSON.
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Paste mechanic + clipboard. Wired in Phase 2 item [7].
+enigo   = "0.2"
+arboard = "3"
+
+# Win32 bindings. Phase 2 [6,7] add more feature flags as needed.
+windows = { version = "0.58", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_UI_Accessibility",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Storage_FileSystem",
+] }
+
+# WAV writer for the Privacy → Store audio setting. Writes raw PCM
+# f32 samples from cpal out to %APPDATA%\popo\audio\{id}.wav.
+hound = "3.5"
+
+# Logging + misc utilities.
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender   = "0.2"
+anyhow             = "1"
+uuid               = { version = "1", features = ["v4"] }
+once_cell          = "1"
+base64             = "0.22"
+
+# HTTP client for Gemini 3.1 Flash-Lite REST calls (post-Chirp
+# transcript polish). rustls-tls features match our existing
+# tonic+rustls stack so we don't pull in OpenSSL as a second crypto
+# backend. No `default-features` so we skip cookies / gzip / brotli
+# that we don't need for a single JSON POST.
+reqwest            = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+miniz_oxide        = "0.8"
+
+[features]
+# Placeholder — see default features in the brief.
+default = ["custom-protocol"]
+# This feature is used for production builds or when a dev server is not
+# specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"      # strip unwinding machinery
+codegen-units = 1    # slower compile, smaller binary
+lto = true           # enable link-time optimization
+opt-level = "s"      # optimize for binary size
+strip = true         # strip symbols from binary

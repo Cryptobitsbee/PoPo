@@ -1,0 +1,71 @@
+/*
+ * fonts.css — Geist Pixel family only.
+ *
+ * Per docs/DESIGN_SYSTEM.md §2 the brief mandates Geist Pixel and
+ * forbids any other font family (even for code blocks — GeistPixelLine
+ * is the code-friendly variant).
+ *
+ * Why @font-face instead of `import 'geist/font/pixel'`?
+ * The `geist` npm package is Next.js-only (uses `next/font/local`).
+ * In Vite we load the .woff2 files directly. `scripts/copy-geist-fonts.mjs`
+ * copies them from node_modules to apps/desktop/public/fonts/ on
+ * `pnpm predev` / `pnpm prebuild`. See .clinerules Session 4 entry.
+ */
+
+@font-face {
+  font-family: "Geist Pixel Square";
+  src: url("/fonts/GeistPixel-Square.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Pixel Grid";
+  src: url("/fonts/GeistPixel-Grid.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Pixel Circle";
+  src: url("/fonts/GeistPixel-Circle.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Pixel Line";
+  src: url("/fonts/GeistPixel-Line.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Pixel Triangle";
+  src: url("/fonts/GeistPixel-Triangle.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * Canonical CSS custom properties for the five variants. Components
+ * reference these, not the raw `font-family: "Geist Pixel Square"` string.
+ * DESIGN_SYSTEM §2 variant assignments:
+ *   Square   → nav labels, buttons, section headings, mode names
+ *   Grid     → timestamps, durations, word counts, stats
+ *   Circle   → chips, language tags, badges
+ *   Line     → transcript body (reading surface)
+ *   Triangle → decorative accents (default-mode marker, etc.)
+ */
+:root {
+  --font-pixel-square: "Geist Pixel Square", ui-monospace, monospace;
+  --font-pixel-grid: "Geist Pixel Grid", ui-monospace, monospace;
+  --font-pixel-circle: "Geist Pixel Circle", ui-monospace, monospace;
+  --font-pixel-line: "Geist Pixel Line", ui-monospace, monospace;
+  --font-pixel-triangle: "Geist Pixel Triangle", ui-monospace, monospace;
+}

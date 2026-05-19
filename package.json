@@ -1,0 +1,22 @@
+{
+  "name": "popo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "popo — Windows system-level AI voice dictation",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "pnpm --filter desktop tauri dev",
+    "dev:landing": "pnpm --filter landing dev",
+    "build": "pnpm --filter desktop tauri build",
+    "build:landing": "pnpm --filter landing build",
+    "tauri": "pnpm --filter desktop tauri",
+    "typecheck": "pnpm -r --parallel typecheck"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5"
+  }
+}

@@ -1,0 +1,45 @@
+rules_version = '2';
+
+// popo — Firestore security rules
+//
+// Scope: every document under /users/{uid}/** is owned by that user.
+// A user can read and write ONLY their own data. Unauthenticated requests
+// are rejected outright. This ruleset covers every collection written by
+// the popo desktop app: the user profile doc + sessions, modes, settings,
+// and the _diagnostics ping used by the Account page Test button.
+//
+// Why the nested match:
+//   `match /users/{userId}/{document=**}` matches any path of the form
+//   users/{userId}/<one-or-more-segments> but does NOT match the
+//   users/{userId} doc ITSELF. Without an outer rule for the parent,
+//   direct writes to users/{userId} are rejected with permission-denied.
+//   Those parent writes are what turn the "ghost parent" doc into a
+//   real doc so it shows up in the Firebase Console Data viewer.
+//
+// Deploy via:
+//   firebase deploy --project popo-flow --only firestore:rules
+//
+// The firebase.json at the project root targets the named database
+// "popo-flow" (asia-south1), not the default.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The user's top-level profile document.
+    match /users/{userId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+
+      // Every subcollection under the user (sessions, modes, settings,
+      // _diagnostics, and any future ones) inherits the same ownership.
+      match /{document=**} {
+        allow read, write: if request.auth != null
+                           && request.auth.uid == userId;
+      }
+    }
+
+    // Everything else is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

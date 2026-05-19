@@ -1,0 +1,4 @@
+# Logs and editor swap files (also covered by root .gitignore)
+*.log
+*.swp
+*.swo

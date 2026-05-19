@@ -1,0 +1,256 @@
+/*
+ * globals.css — the single source of design tokens.
+ *
+ * Every color, radius, and spacing value in popo is declared here.
+ * Per docs/DESIGN_SYSTEM.md §10 the lint is:
+ *   - No hex literals outside this file.
+ *   - No pure #000 / #fff anywhere.
+ *   - No rectangular corners.
+ *   - Every rule uses a token.
+ *
+ * This file imports Tailwind v4 and then declares the tokens as CSS
+ * custom properties on :root. Components reference them via
+ * `var(--token-name)` or Tailwind arbitrary-value syntax.
+ *
+ * Per-window background strategy:
+ *   - Default (pill webview): html/body/#root are TRANSPARENT so Tauri's
+ *     transparent pill window shows through. Only the pill's motion.div
+ *     paints pixels.
+ *   - Main window (any non-/pill route): main.tsx sets
+ *     `data-window="main"` on <html>, which re-applies --bg-base to
+ *     html + body + #root. See main.tsx for the runtime trigger.
+ */
+
+@import "tailwindcss";
+
+:root {
+  /* ── Core surfaces — carved from darkness ─────────────────────── */
+  --bg-void: #080808;
+  --bg-base: #0d0d0d;
+  --bg-surface: #131313;
+  --bg-elevated: #1a1a1a;
+  --bg-high: #222222;
+
+  /* ── Text ────────────────────────────────────────────────────── */
+  --text-primary: #edebe6;
+  --text-secondary: #7a786f;
+  --text-ghost: #3a3836;
+
+  /* ── Borders ─────────────────────────────────────────────────── */
+  --border-faint: #161614;
+  --border-subtle: #202020;
+  --border-default: #2c2a27;
+  --border-strong: #3d3a36;
+
+  /* ── Waveform ────────────────────────────────────────────────── */
+  --wave-primary: #edebe6;
+  /* Flat bars sit against a near-black pill bg; previous #2c2a27 was
+   * invisible until voice triggered the active color swap. #5a5652 is
+   * still muted but readable. */
+  --wave-flat: #5a5652;
+
+  /* ── Pill ────────────────────────────────────────────────────── */
+  /* Sleep state is intentionally quiet, but not invisible. Previous
+   * 0.55 alpha vanished on dark desktops; 0.92 gives a clear shape
+   * with a subtle border so users can spot AND drag the pill.
+   *
+   * Sleep border bumped 0.18 → 0.22 in Session 50 (~20% brighter)
+   * to give the smaller sleep pill a sharper edge so it's easier
+   * to find at a glance. Active pill border stays at 0.07 —
+   * during recording the surface itself is already prominent. */
+  --pill-sleep-bg: rgba(26, 26, 24, 0.92);
+  --pill-sleep-border: rgba(237, 235, 230, 0.22);
+  --pill-bg: rgba(8, 8, 8, 0.93);
+  --pill-border: rgba(237, 235, 230, 0.07);
+  --pill-blur: 20px;
+
+  /* ── Semantic — used ONLY by the pill's success and error states ─ */
+  --accent-success: #2d6a4f;
+  --accent-error: #8b2323;
+  /* Focus ring color — a muted blue-violet that reads cleanly against
+   * both the dark canvas (--bg-base) and the elevated surfaces
+   * (--bg-elevated / --bg-high). Only surfaces for keyboard-only
+   * focus (`:focus-visible`) so mouse clicks don't light up rings. */
+  --accent-focus: #6c8fff;
+
+  /* ── Type scale ──────────────────────────────────────────────── */
+  --text-2xs: 9px;
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-stat: 36px;
+
+  /* ── Radii ───────────────────────────────────────────────────── */
+  --radius-pill: 9999px;
+  --radius-card: 12px;
+  --radius-button: 8px;
+  --radius-badge: 6px;
+  --radius-micro: 4px;
+
+  /* ── Spacing (4px base) ───────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 28px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+}
+
+/*
+ * Base reset. Default backgrounds TRANSPARENT so the pill webview's
+ * transparent:true property surfaces through to the OS compositor.
+ * The main window opts back into the dark canvas below.
+ */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-pixel-line), ui-monospace, monospace;
+  font-size: var(--text-base);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden; /* Tauri windows handle their own scrolling */
+  user-select: none; /* text selection is opt-in per component */
+  cursor: default;
+}
+
+/*
+ * Main window opt-in: main.tsx sets html[data-window="main"] on mount
+ * for any route that isn't /pill. This repaints the carved-from-darkness
+ * canvas for History / Modes / Test / Stats / Settings / Account.
+ */
+html[data-window="main"],
+html[data-window="main"] body,
+html[data-window="main"] #root {
+  background: var(--bg-base);
+}
+
+/* Links */
+a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+/*
+ * Themed scrollbars — all non-pill webviews.
+ *
+ * Originally scoped to `html[data-window="main"]` only, but the
+ * quick-switcher webview (Session 33) also scrolls through long
+ * mode lists, and its transparent window style means it does NOT
+ * set `data-window="main"`. The default WebKit scrollbar (a white
+ * vertical bar) looks jarring inside a carved-from-darkness overlay
+ * card.
+ *
+ * Made global (Session 33 polish) because the pill webview has
+ * overflow:hidden on every surface and never scrolls anyway — so
+ * the rules never fire there. Any future non-scrolling transparent
+ * window (splash, toast, etc.) is unaffected for the same reason.
+ *
+ * Track is fully transparent (so the pane background shows through).
+ * Thumb uses --border-subtle at rest, --border-strong on hover —
+ * quiet at rest, present on intent. Matches DESIGN_SYSTEM §10:
+ *   - no pure #fff / #000
+ *   - every color is a token
+ *   - no radius: 0 (we use --radius-badge via border-radius)
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border: 2px solid transparent;
+  border-radius: var(--radius-badge);
+  background-clip: padding-box;
+  transition: background 150ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--text-ghost);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox fallback (if popo ever runs outside WebView2). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+/* popo-spin — used by small loading spinners (e.g. sync log pending rows). */
+@keyframes popo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Focus-visible rings ────────────────────────────────
+   Keyboard-only accessibility: every interactive element gets a
+   subtle but unmistakable focus ring when focused via Tab / arrow
+   keys, but NOT when clicked by mouse (`:focus-visible` handles
+   that distinction natively). Uses --accent-focus with an offset so
+   the ring is visible against both the dark canvas and elevated
+   surfaces.
+*/
+*:focus {
+  outline: none;
+}
+*:focus-visible {
+  outline: 2px solid var(--accent-focus, #6c8fff);
+  outline-offset: 2px;
+  border-radius: var(--radius-micro);
+}
+
+/* Buttons with their own border don't need the offset — keeps the
+   ring flush against the actual button edge rather than floating. */
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="option"]:focus-visible,
+[role="menuitem"]:focus-visible {
+  outline-offset: 1px;
+}
+
+/* Inputs: ring replaces the default border-color change so focus
+   state is louder for keyboard users. Keep the existing :focus
+   border-color (set inline on Input.tsx); we just add the ring. */
+input:focus-visible,
+textarea:focus-visible,
+[contenteditable="true"]:focus-visible {
+  outline: 2px solid var(--accent-focus, #6c8fff);
+  outline-offset: 1px;
+}
+
+/* Links (inside the app — CloudHint, OAuth deep links). */
+a:focus-visible {
+  outline: 2px solid var(--accent-focus, #6c8fff);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
