@@ -27,6 +27,15 @@
   "devDependencies": {
     "sharp": "^0.34.5"
   },
+  "pnpm": {
+    "overrides": {
+      "next": ">=15.3.2",
+      "undici": ">=6.21.1",
+      "postcss": ">=8.5.1",
+      "esbuild": ">=0.25.0",
+      "protobufjs": ">=7.4.0"
+    }
+  },
   "author": "GitHub Inc.",
   "files": [
     "bin/",

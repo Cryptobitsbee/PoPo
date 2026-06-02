@@ -526,7 +526,7 @@ function SelectedChip({
       }}
       title={name}
     >
-      {iconBase64 ? (
+      {iconBase64 && /^[A-Za-z0-9+/=]+$/.test(iconBase64) ? (
         <img
           src={`data:image/png;base64,${iconBase64}`}
           alt=""

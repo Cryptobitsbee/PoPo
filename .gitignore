@@ -1,34 +1,62 @@
-# This file is automatically added by @npmcli/template-oss. Do not edit.
+# ─── popo .gitignore ─────────────────────────────────────────────────
+# Only track APPLICATION CODE + docs. Exclude development-only reference
+# folders, credentials, build outputs, and OS/editor junk.
 
-# ignore everything in the root
-/*
+# ─── Node / pnpm ──────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+*.tgz
 
-!**/.gitignore
-!/.commitlintrc.js
-!/.eslint.config.js
-!/.eslintrc.js
-!/.eslintrc.local.*
-!/.git-blame-ignore-revs
-!/.github/
-!/.gitignore
-!/.npmrc
-!/.prettierignore
-!/.prettierrc.js
-!/.release-please-manifest.json
-!/bin/
-!/CHANGELOG*
-!/CODE_OF_CONDUCT.md
-!/CONTRIBUTING.md
-!/docs/
-!/lib/
-!/LICENSE*
-!/map.js
-!/package.json
-!/README*
-!/release-please-config.json
-!/scripts/
-!/SECURITY.md
-!/tap-snapshots/
-!/test/
-!/tsconfig.json
+# ─── Build outputs ────────────────────────────────────────────────────
+dist/
+target/
+*.exe
+*.msi
+*.nsis
+
+# ── Environment / credentials (NEVER commit these) ──────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+popo-flow.json
+**/gcp-sa*.json
+**/service-account*.json
+**/firebase-adminsdk*.json
+**/*-credentials*.json
+**/*serviceAccount*.json
+
+# ─── Development-only reference / skill folders ───────────────────────
+# These were imported for design research (Sessions 3–4) and contain
+# third-party scripts that trigger CodeQL security alerts. They're
+# NOT application code — popo never executes them. The relevant design
+# rules are already integrated into docs/DESIGN_SYSTEM.md.
+impeccable-style-universal/
+taste-skill-main/
+gsap-skills-main/
+
+# ─── Tauri build artifacts ────────────────────────────────────────────
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/dist/
+
+# ─── Editor / OS junk ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/settings.json
+*.code-workspace
+
+# ─── Test / coverage ──────────────────────────────────────────────────
 tap-testdir*/
+coverage/
+.nyc_output/
+
+# ─── Misc ─────────────────────────────────────────────────────────────
+*.log
+*.bak
+*.tmp
