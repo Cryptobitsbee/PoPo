@@ -77,12 +77,14 @@ export default function StatCard({
       </div>
       <div
         style={{
-          fontFamily: "var(--font-pixel-grid)",
-          fontSize: "var(--text-xs)",
+          // Session 53: unified section-heading style.
+          fontFamily: "var(--font-pixel-square)",
+          fontSize: "var(--text-sm)",
           lineHeight: 1.2,
           color: "var(--text-secondary)",
           textTransform: "uppercase",
-          letterSpacing: "0.06em",
+          letterSpacing: "0.12em",
+          fontWeight: 500,
         }}
       >
         {label}

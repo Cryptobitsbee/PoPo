@@ -122,7 +122,8 @@ function LanguageBar({
         style={{
           fontFamily: "var(--font-pixel-grid)",
           fontSize: "var(--text-xs)",
-          color: "var(--text-ghost)",
+          // Session 54: ghost → secondary so the count is readable.
+          color: "var(--text-secondary)",
           textAlign: "right",
           fontVariantNumeric: "tabular-nums",
         }}

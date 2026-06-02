@@ -64,8 +64,58 @@
  */
 :root {
   --font-pixel-square: "Geist Pixel Square", ui-monospace, monospace;
-  --font-pixel-grid: "Geist Pixel Grid", ui-monospace, monospace;
-  --font-pixel-circle: "Geist Pixel Circle", ui-monospace, monospace;
-  --font-pixel-line: "Geist Pixel Line", ui-monospace, monospace;
+  /*
+   * Session 54: --font-pixel-grid was "Geist Pixel Grid" — a
+   * graph-paper variant that, like Line, drops detail at small
+   * sizes. The user flagged unreadable sub-text across Stats,
+   * History, Dictionary and several other pages — all of which
+   * used `--font-pixel-grid` for small captions, metadata rows,
+   * counts, etc.
+   *
+   * Same fix as --font-pixel-line in Session 53: point this var
+   * at "Geist Pixel Square" so every existing usage automatically
+   * picks up the readable variant. The original @font-face
+   * declaration is still in place if we ever want it back.
+   *
+   * This affects KeyChip / kbd-style chips too (QuickSwitcher
+   * footer legend, Settings hotkey row, GCPSetupWizard kbd hints).
+   * They look fine with square — the chip's bg + border is what
+   * gives them the "keyboard key" affordance, not the font.
+   */
+  --font-pixel-grid: "Geist Pixel Square", ui-monospace, monospace;
+  /*
+   * Session 54 (continued): --font-pixel-circle was "Geist Pixel
+   * Circle" — a round/dot-based variant. It's used by the Chip
+   * primitive (language chip in ModeCard, mode chip in
+   * SessionRow, translation badge). At text-2xs the dot strokes
+   * disappear, leaving the chip text effectively unreadable.
+   *
+   * Same fix — point at Square. Chip's character (visual
+   * pill-shape, --bg-elevated background, --radius-badge) is
+   * preserved; only the text glyphs become legible.
+   */
+  --font-pixel-circle: "Geist Pixel Square", ui-monospace, monospace;
+  /*
+   * Session 53: --font-pixel-line was "Geist Pixel Line" — a
+   * dotted/line-stroke variant of Geist Pixel. At <14 px it stops
+   * rendering reliably: thin lines drop out, characters partially
+   * disappear, and lines of text break visually mid-word. The user
+   * specifically asked us to stop using it for small sub-text.
+   *
+   * Rather than touch ~50 component files individually, we point
+   * the CSS variable at "Geist Pixel Square" so every existing
+   * `var(--font-pixel-line)` usage gets the readable square
+   * variant automatically. This is the same font as
+   * --font-pixel-square; the two variables now resolve to the
+   * same family, but we keep both names so existing code keeps
+   * working and intent is preserved (calling sites that wanted
+   * "this is sub-text" still say `--font-pixel-line`, just with
+   * the readable rendering).
+   *
+   * If we ever want a distinct sub-text variant again, swap this
+   * back to "Geist Pixel Line" — the @font-face declaration above
+   * is still in place.
+   */
+  --font-pixel-line: "Geist Pixel Square", ui-monospace, monospace;
   --font-pixel-triangle: "Geist Pixel Triangle", ui-monospace, monospace;
 }

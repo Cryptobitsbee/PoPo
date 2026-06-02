@@ -1857,6 +1857,7 @@ fn spawn_waveform_task(
         // (0.5+) = bars jitter on every peak.
         const SMOOTH_ALPHA: f32 = 0.4;
         let mut smoothed = [0.0f32; 16];
+        let mut bar_history = processor::BarHistory::new();
 
         // Silence-detection bookkeeping. Only used in Toggle mode with
         // silence_detection_seconds > 0. `last_voice_at` anchors the
@@ -1868,7 +1869,14 @@ fn spawn_waveform_task(
 
         while running.load(Ordering::Relaxed) {
             ticker.tick().await;
-            let raw_bars = processor::compute_bars(&samples, sample_rate);
+            // Session 56: switched from compute_bars (which split a
+            // single 40ms window into 16 adjacent chunks — all bars
+            // looked the same) to BarHistory.tick() which keeps a
+            // ROLLING HISTORY of the last 16 ticks (640ms). Each bar
+            // represents a different 40ms time-slice, so the waveform
+            // scrolls left with loud/quiet variation over time — like
+            // Discord / Zoom / Wispr.
+            let raw_bars = bar_history.tick(&samples, sample_rate);
             let max_bar = raw_bars.iter().cloned().fold(0.0f32, f32::max);
             let voiced = max_bar > VOICE_THRESHOLD;
 
@@ -2089,8 +2097,8 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             )
         } else {
             format!(
-                "No speech detected from {} (peak signal {:.3}). Check mic isn't muted, or pick a different mic in Settings.",
-                capture_device_name, peak_pre
+                "No speech detected from {} (signal {:.3}, raw {:.4}). Check mic isn't muted, or pick a different mic in Settings.",
+                capture_device_name, peak_post, peak_pre
             )
         };
         let _ = app.emit("pill:state:error", ErrorPayload::info("no_speech", &reason));

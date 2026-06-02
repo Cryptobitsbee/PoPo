@@ -284,11 +284,13 @@ export default function TestPage() {
             <label
               style={{
                 display: "block",
-                fontFamily: "var(--font-pixel-grid)",
-                fontSize: "var(--text-xs)",
-                color: "var(--text-ghost)",
+                // Session 53: unified section-heading style.
+                fontFamily: "var(--font-pixel-square)",
+                fontSize: "var(--text-sm)",
+                color: "var(--text-secondary)",
                 textTransform: "uppercase",
-                letterSpacing: "0.1em",
+                letterSpacing: "0.12em",
+                fontWeight: 500,
                 marginBottom: "var(--sp-2)",
               }}
             >
@@ -306,11 +308,13 @@ export default function TestPage() {
             <label
               style={{
                 display: "block",
-                fontFamily: "var(--font-pixel-grid)",
-                fontSize: "var(--text-xs)",
-                color: "var(--text-ghost)",
+                // Session 53: unified section-heading style.
+                fontFamily: "var(--font-pixel-square)",
+                fontSize: "var(--text-sm)",
+                color: "var(--text-secondary)",
                 textTransform: "uppercase",
-                letterSpacing: "0.1em",
+                letterSpacing: "0.12em",
+                fontWeight: 500,
                 marginBottom: "var(--sp-2)",
               }}
             >

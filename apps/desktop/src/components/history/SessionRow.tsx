@@ -1,8 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Copy, Paperclip, Play, Trash } from "@phosphor-icons/react";
+import {
+  Check,
+  Copy,
+  Paperclip,
+  Play,
+  Pause,
+  Trash,
+} from "@phosphor-icons/react";
 import type { Session, Mode } from "@popo/shared-types";
+import { invoke } from "@tauri-apps/api/core";
 import Chip from "../shared/Chip";
+import ConfirmDialog from "../shared/ConfirmDialog";
 import SessionDetail from "./SessionDetail";
 import HighlightedTranscript from "./HighlightedTranscript";
 import { useAppIconsStore } from "../../store/appIconsStore";
@@ -60,6 +69,70 @@ export default function SessionRow({
   onDelete,
 }: SessionRowProps) {
   const [hovered, setHovered] = useState(false);
+  // Brief "✓" feedback on the Copy button.
+  const [copied, setCopied] = useState(false);
+  // Confirm-before-delete dialog state.
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  // Inline audio playback from collapsed row (no expand needed).
+  const [inlinePlaying, setInlinePlaying] = useState(false);
+  const inlineAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [inlineAudioSrc, setInlineAudioSrc] = useState<string | null>(null);
+
+  // Handle Play/Pause from the collapsed row. Loads audio on first
+  // click (via Rust byte-read → Blob URL), then toggles play/pause.
+  const handleInlinePlay = async () => {
+    // If already playing, pause.
+    if (inlinePlaying && inlineAudioRef.current) {
+      inlineAudioRef.current.pause();
+      setInlinePlaying(false);
+      return;
+    }
+
+    // If we don't have a src yet, load it.
+    if (!inlineAudioSrc) {
+      // Try cloud URL first (no byte transfer needed).
+      if (session.audioDownloadUrl) {
+        setInlineAudioSrc(session.audioDownloadUrl);
+        // Play after state update via the effect below.
+      } else if (session.audioStoragePath) {
+        try {
+          const bytes = await invoke<number[]>("cmd_read_audio_bytes", {
+            path: session.audioStoragePath,
+          });
+          if (bytes && bytes.length > 0) {
+            const blob = new Blob([new Uint8Array(bytes)], {
+              type: "audio/wav",
+            });
+            const url = URL.createObjectURL(blob);
+            setInlineAudioSrc(url);
+          }
+        } catch {
+          return; // silently fail
+        }
+      }
+      // Playback will trigger in the effect that watches inlineAudioSrc.
+      setInlinePlaying(true);
+      return;
+    }
+
+    // Src already loaded — just play.
+    if (inlineAudioRef.current) {
+      inlineAudioRef.current.play().catch(() => setInlinePlaying(false));
+      setInlinePlaying(true);
+    }
+  };
+
+  // When inlineAudioSrc first becomes available + we want to play,
+  // trigger playback.
+  useEffect(() => {
+    if (inlineAudioSrc && inlinePlaying && inlineAudioRef.current) {
+      // Small delay for the <audio> to pick up the new src.
+      const t = setTimeout(() => {
+        inlineAudioRef.current?.play().catch(() => setInlinePlaying(false));
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [inlineAudioSrc, inlinePlaying]);
 
   // Delayed unmount: when `selected` flips false, the grid's
   // `grid-template-rows: 1fr → 0fr` animation needs the child
@@ -303,27 +376,29 @@ export default function SessionRow({
             }}
           >
             <RowAction
-              icon={Copy}
-              label="Copy transcript"
+              icon={copied ? Check : Copy}
+              label={copied ? "Copied!" : "Copy transcript"}
               onClick={(e) => {
                 e.stopPropagation();
                 onCopy();
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
               }}
             />
             <RowAction
-              icon={Play}
+              icon={inlinePlaying ? Pause : Play}
               label={
                 hasAudio
-                  ? "Open to play recording"
+                  ? inlinePlaying
+                    ? "Pause"
+                    : "Play recording"
                   : "No audio — enable Store audio in Settings"
               }
               disabled={!hasAudio}
               onClick={(e) => {
                 e.stopPropagation();
-                // Playing is available in the detail view. Opening
-                // that is the same gesture as clicking the row, so
-                // just toggle selection on.
-                if (hasAudio) onSelect();
+                if (!hasAudio) return;
+                void handleInlinePlay();
               }}
             />
             <RowAction
@@ -331,7 +406,7 @@ export default function SessionRow({
               label="Delete session"
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete();
+                setConfirmDeleteOpen(true);
               }}
               tone="destructive"
             />
@@ -363,6 +438,31 @@ export default function SessionRow({
           )}
         </div>
       </div>
+
+      {/* Hidden audio element for inline playback without expanding */}
+      {inlineAudioSrc && (
+        <audio
+          ref={inlineAudioRef}
+          src={inlineAudioSrc}
+          onEnded={() => setInlinePlaying(false)}
+          onPause={() => setInlinePlaying(false)}
+          style={{ display: "none" }}
+        />
+      )}
+
+      {/* Delete confirmation dialog */}
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onConfirm={() => {
+          setConfirmDeleteOpen(false);
+          onDelete();
+        }}
+        onCancel={() => setConfirmDeleteOpen(false)}
+        title="Delete session?"
+        description="This recording and its transcript will be permanently removed. This can't be undone."
+        confirmLabel="Delete"
+        tone="destructive"
+      />
     </motion.div>
   );
 }

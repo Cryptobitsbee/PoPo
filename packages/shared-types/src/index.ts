@@ -289,6 +289,26 @@ export interface Mode {
    * the corresponding glide parameters.
    */
   soundPreset?: "default" | "soft" | "chime" | "bell" | "none";
+  /**
+   * If set, the cleaned transcript is translated to this target
+   * language during the AI-formatting step. Use BCP-47 codes:
+   *   - "en-US" English (US)
+   *   - "hi-IN" Hindi
+   *   - "es-ES" Spanish
+   *   ...
+   *
+   * When set, the mode's `systemPrompt` should be a translation-
+   * aware prompt (the ModeEditor auto-fills one when the user
+   * picks a language; they can still customise the prompt
+   * afterwards). The translation runs through Gemini polish,
+   * so `Settings.autoFormat` must be ON and a Gemini API key
+   * configured for the translation to actually take effect —
+   * without those, popo falls back to Chirp's original-language
+   * transcript and the badge in ModeCard shows a warning.
+   *
+   * Session 51 — feature #12.
+   */
+  translateTo?: string;
 }
 
 /**

@@ -747,7 +747,15 @@ Firestore at `users/{uid}/vocabCandidates/{correctSpelling}`.
 
 ## #12 Translation mode
 
-**Status**: Not started
+**Status**: Shipped (Session 51) — frontend-only implementation; the
+mode's `systemPrompt` is auto-filled with a translation-aware
+template when the user picks a target language, so Rust didn't need
+any changes. The roadmap's optional Rust path (passing `translateTo`
+through `cmd_set_mode_bindings` for server-side enforcement) was
+skipped — if a future user customises the prompt and breaks
+translation, we can add enforcement then. Seed translation modes
+were also skipped (users can create custom translation modes via
+the editor; auto-fill makes that trivial).
 **Tier**: 2 · **Effort**: 1 day · **Phase**: Polish
 
 ### What

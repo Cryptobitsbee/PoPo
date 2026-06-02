@@ -72,11 +72,10 @@ export default function ErrorTooltip() {
           transition={{ duration: 0.25, ease: [0.25, 1, 0.5, 1] }}
           onClick={() => {
             setVisible(false);
-            // If persistent, also wipe the store so it doesn't
-            // immediately re-render on remount.
-            if (frozen?.persistent) {
-              window.setTimeout(() => clearError(), 300);
-            }
+            // Wipe the store after the fade so a manually-dismissed
+            // transient error cannot leave the main pill stuck in the
+            // red error state.
+            window.setTimeout(() => clearError(), 300);
           }}
           role={isInfo ? "status" : "alert"}
           aria-live={isInfo ? "polite" : "assertive"}

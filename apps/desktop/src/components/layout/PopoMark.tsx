@@ -1,47 +1,58 @@
 /**
- * PopoMark — the sidebar-only quieter glyph.
+ * PopoMark — the sidebar's brand glyph.
  *
- * Three vertical pill bars (short / tall / medium) on a transparent
- * background, rendered in --text-ghost so they read as a subtle
- * wayfinding element rather than demanding attention.
+ * Session 56: switched from an inline-SVG of three pill bars to an
+ * <img> tag pointing at the user-provided 512×512 logo PNG at
+ * `/popo-mark.png` (i.e. `apps/desktop/public/popo-mark.png`).
  *
- * This is INTENTIONALLY DIFFERENT from `PopoIcon` (the canonical
- * app-icon tile with the warm-white rounded square). The tile is
- * right for external contexts where popo is fighting for attention
- * (taskbar, splash, installer sidebar). Inside the app, where the
- * user has already opened popo and doesn't need convincing, a full
- * warm-white tile in the top-left would fight the dark canvas — the
- * subtle bars fit the calm sidebar tone much better.
+ * The image is white-on-transparent so it sits naturally on the
+ * dark sidebar canvas (`--bg-void`). We render at 16 px (matches
+ * the previous SVG dimensions) so the rest of the sidebar layout
+ * stays unchanged. `image-rendering: pixelated` would NOT help here
+ * because the source is high-resolution; default smooth scaling is
+ * correct.
  *
- * Used only in `components/layout/Sidebar.tsx`. Everywhere else,
- * `components/shared/PopoIcon.tsx` is the correct choice.
+ * Important: this is INTENTIONALLY DIFFERENT from `PopoIcon`. The
+ * latter is the canonical app-icon tile (black rounded square with
+ * rim glow + white logo) used for taskbar / splash / installer.
+ * Inside the app the warm sidebar canvas already provides the
+ * "tile" — adding another would feel busy.
+ *
+ * To replace the source asset later, just overwrite
+ * `apps/desktop/public/popo-mark.png` with a new white-on-
+ * transparent square PNG; this component picks it up automatically.
  */
 
 export interface PopoMarkProps {
   size?: number;
-  color?: string;
+  /**
+   * Optional CSS filter for tinting. Default: leaves the white logo
+   * white. If you ever need the mark in a different tone (e.g. a
+   * marketing surface), pass something like `brightness(0.6)`.
+   */
+  filter?: string;
 }
 
-export default function PopoMark({
-  size = 16,
-  color = "var(--text-ghost)",
-}: PopoMarkProps) {
+export default function PopoMark({ size = 16, filter }: PopoMarkProps) {
   return (
-    <svg
+    <img
+      src="/popo-mark.png"
       width={size}
       height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="popo"
-      role="img"
-    >
-      {/* Short left bar */}
-      <rect x="2" y="6" width="2" height="4" rx="1" fill={color} />
-      {/* Tall middle bar */}
-      <rect x="6.5" y="3" width="2" height="10" rx="1" fill={color} />
-      {/* Medium right bar */}
-      <rect x="11" y="5" width="2" height="6" rx="1" fill={color} />
-    </svg>
+      alt="popo"
+      style={{
+        display: "block",
+        // Slight selectability hint — block-display + no drag-image
+        // so this glyph doesn't get accidentally dragged into other
+        // apps. Tauri also disables this at the window level for
+        // most contexts but belt-and-suspenders is cheap.
+        userSelect: "none",
+        pointerEvents: "none",
+        filter,
+      }}
+      // No-op draggable=false to prevent the browser's native
+      // image-drag affordance.
+      draggable={false}
+    />
   );
 }

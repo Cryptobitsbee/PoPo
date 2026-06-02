@@ -201,11 +201,17 @@ function SnippetRow({
         {snippet.label && (
           <div
             style={{
-              fontFamily: "var(--font-pixel-grid)",
+              // Session 53: unified section-heading style. SnippetRow
+              // captions are inline-row labels rather than full
+              // section headers, so we keep them slightly tighter
+              // (text-xs vs text-sm) but use the readable square
+              // font and secondary color so they're visible.
+              fontFamily: "var(--font-pixel-square)",
               fontSize: "var(--text-xs)",
-              color: "var(--text-ghost)",
-              letterSpacing: "0.04em",
+              color: "var(--text-secondary)",
+              letterSpacing: "0.1em",
               textTransform: "uppercase",
+              fontWeight: 500,
             }}
           >
             {snippet.label}
@@ -241,7 +247,9 @@ function SnippetRow({
             style={{
               fontFamily: "var(--font-pixel-grid)",
               fontSize: "var(--text-xs)",
-              color: "var(--text-ghost)",
+              // Session 54: ghost → secondary so the usage count
+              // (e.g. "5×") is readable next to each snippet row.
+              color: "var(--text-secondary)",
               fontVariantNumeric: "tabular-nums",
               minWidth: 24,
               textAlign: "right",

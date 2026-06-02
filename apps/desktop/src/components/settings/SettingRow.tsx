@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import InfoHint from "../shared/InfoHint";
 
 /**
  * SettingRow — the core row inside a SettingsGroup.
@@ -18,6 +19,9 @@ import type { ReactNode } from "react";
 export interface SettingRowProps {
   label: string;
   description?: ReactNode;
+  /** Tooltip description shown via a hoverable ℹ icon next to the label.
+   *  Use for long descriptions that would wrap to 2+ lines inline. */
+  hint?: ReactNode;
   children: ReactNode;
   /** Suppress bottom border (e.g., last row in a group). */
   last?: boolean;
@@ -28,6 +32,7 @@ export interface SettingRowProps {
 export default function SettingRow({
   label,
   description,
+  hint,
   children,
   last,
   align = "right",
@@ -55,13 +60,22 @@ export default function SettingRow({
       >
         <div
           style={{
-            fontFamily: "var(--font-pixel-square)",
-            fontSize: "var(--text-sm)",
-            lineHeight: 1.3,
-            color: "var(--text-primary)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          {label}
+          <span
+            style={{
+              fontFamily: "var(--font-pixel-square)",
+              fontSize: "var(--text-sm)",
+              lineHeight: 1.3,
+              color: "var(--text-primary)",
+            }}
+          >
+            {label}
+          </span>
+          {hint && <InfoHint text={hint} />}
         </div>
         {description && (
           <div

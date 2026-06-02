@@ -31,10 +31,30 @@
   --bg-elevated: #1a1a1a;
   --bg-high: #222222;
 
-  /* ── Text ────────────────────────────────────────────────────── */
+  /* ── Text ───────────────────────────────────────────── */
+  /*
+   * Three-tier hierarchy on --bg-base (#0d0d0d):
+   *
+   *   --text-primary    #edebe6  ~16:1 contrast  (WCAG AAA)
+   *   --text-secondary  #7a786f   ~4.5:1         (WCAG AA body)
+   *   --text-ghost      #6a6862   ~3.4:1         (WCAG AA large)
+   *
+   * Session 55 retune: ghost was #3a3836 which gave a ~1.7:1
+   * ratio — well below WCAG's 3:1 floor for ANY readable text.
+   * That made sidebar icons, the v0.1 label, separator dots,
+   * empty states, and dropdown placeholders effectively invisible
+   * on the dark canvas. Bumped to #6a6862 — still clearly subordinate
+   * to secondary (4.5:1), but now passes WCAG AA Large (3:1) so
+   * users can actually see tertiary affordances.
+   *
+   * Three-tier separation lets components encode importance:
+   *   - Primary: titles, current-state values, active controls
+   *   - Secondary: body text, sub-labels, metadata that needs reading
+   *   - Ghost: separator dots, decorative captions, idle icons
+   */
   --text-primary: #edebe6;
   --text-secondary: #7a786f;
-  --text-ghost: #3a3836;
+  --text-ghost: #6a6862;
 
   /* ── Borders ─────────────────────────────────────────────────── */
   --border-faint: #161614;
@@ -73,8 +93,18 @@
    * focus (`:focus-visible`) so mouse clicks don't light up rings. */
   --accent-focus: #6c8fff;
 
-  /* ── Type scale ──────────────────────────────────────────────── */
-  --text-2xs: 9px;
+  /* ── Type scale ──────────────────────────────── */
+  /*
+   * ~1.2 modular scale (Material Design / Linear / Vercel
+   * convention range). Anchored at --text-base = 15 px.
+   *
+   * Session 55 retune: --text-2xs was 9 px, below the
+   * desktop-readability floor (browsers and OS UIs typically
+   * stop rendering glyph detail cleanly below ~10 px). Bumped
+   * to 10 px which still feels caption-tier next to text-xs
+   * (11 px) but won't drop strokes.
+   */
+  --text-2xs: 10px;
   --text-xs: 11px;
   --text-sm: 13px;
   --text-base: 15px;

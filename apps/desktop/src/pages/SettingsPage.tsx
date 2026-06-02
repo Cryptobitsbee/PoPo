@@ -27,7 +27,6 @@ import HotkeyInput from "../components/shared/HotkeyInput";
 import Button from "../components/shared/Button";
 import Input from "../components/shared/Input";
 import MultiSelect from "../components/shared/MultiSelect";
-import Slider from "../components/shared/Slider";
 
 /**
  * SettingsPage — brief §3 Settings.
@@ -427,12 +426,8 @@ export default function SettingsPage() {
 
         <SettingRow
           label="Microphone"
-          description={(() => {
+          hint={(() => {
             if (settings.micDeviceId) {
-              // User has picked a specific mic. Confirm it's still
-              // connected (the auto-reset effect above handles the
-              // disconnected case, but show what it'll actually use
-              // for the next press).
               const picked = micDevices.find(
                 (d) => d.id === settings.micDeviceId,
               );
@@ -440,10 +435,6 @@ export default function SettingsPage() {
                 ? `Capturing from ${picked.name}.`
                 : `Selected mic isn't connected — will fall back to ${systemDefaultResolvedName ?? "system default"}.`;
             }
-            // null → follow Windows' current default. Show the actual
-            // device name so the user can tell at a glance whether
-            // popo will pick up their built-in mic or, e.g., the
-            // earphones they just plugged in.
             return systemDefaultResolvedName
               ? `System default — capturing from ${systemDefaultResolvedName}.`
               : "Follows Windows default.";
@@ -461,6 +452,7 @@ export default function SettingsPage() {
         <SettingRow
           label="Silence timeout"
           description="Auto-stops Toggle mode after this much silence."
+          last
         >
           <Select
             value={String(settings.silenceDetectionSeconds)}
@@ -468,47 +460,6 @@ export default function SettingsPage() {
             onChange={(v) => update({ silenceDetectionSeconds: Number(v) })}
             aria-label="Silence detection"
             minWidth={140}
-          />
-        </SettingRow>
-
-        {/* ── Pill appearance (Session 49 — feature #20) ────────────
-            Pill opacity sliders. The pill is the always-visible
-            recording surface, so its appearance lives at the
-            bottom of the Recording group. Sleep opacity controls
-            how visible the pill is at idle (0 = invisible);
-            active opacity controls visibility while dictating.
-            Both update live in the pill webview via the cross-
-            webview settings event listener in PillPage. */}
-        <SettingRow
-          label="Pill at rest"
-          description={
-            settings.pillSleepOpacity === 0
-              ? "Invisible. The pill is fully hidden when idle."
-              : "Opacity of the pill when idle. Lower = quieter ambient presence."
-          }
-        >
-          <Slider
-            value={settings.pillSleepOpacity}
-            onChange={(pillSleepOpacity) => update({ pillSleepOpacity })}
-            min={0}
-            max={1}
-            step={0.01}
-            label="Pill opacity at rest"
-          />
-        </SettingRow>
-
-        <SettingRow
-          label="Pill while dictating"
-          description="Opacity of the pill while recording, processing, or showing a result."
-          last
-        >
-          <Slider
-            value={settings.pillActiveOpacity}
-            onChange={(pillActiveOpacity) => update({ pillActiveOpacity })}
-            min={0.3}
-            max={1}
-            step={0.01}
-            label="Pill opacity while dictating"
           />
         </SettingRow>
       </SettingsGroup>
@@ -554,10 +505,10 @@ export default function SettingsPage() {
 
         <SettingRow
           label="Auto-format"
-          description={
+          hint={
             settings.autoFormat
               ? gcp.geminiApiKey
-                ? "On. Each transcript is polished through Gemini 2.5 Flash-Lite using the active mode's prompt — fixes self-corrections, stutters, and refines tone (Code preserves technical terms, Email structures it, etc.). Adds ~600-1500 ms to paste."
+                ? "On. Each transcript is polished through Gemini 2.5 Flash-Lite using the active mode's prompt — fixes self-corrections, stutters, and refines tone. Adds ~600-1500 ms to paste."
                 : "On, but no Gemini API key set yet — add one below for full AI formatting. For now, only Chirp's lighter style biasing applies."
               : "Off. Transcripts paste exactly as spoken — fastest, no AI rewriting at all."
           }
@@ -585,7 +536,7 @@ export default function SettingsPage() {
 
         <SettingRow
           label="Response speed"
-          description="How quickly popo decides you're done speaking. Snappier responses mean faster paste but can truncate slow speech."
+          hint="How quickly popo decides you're done speaking. Snappier responses mean faster paste but can truncate slow speech."
         >
           <Select
             value={settings.endpointing}
@@ -612,7 +563,7 @@ export default function SettingsPage() {
         {settings.autoFormat && (
           <SettingRow
             label="Gemini API key"
-            description={
+            hint={
               <>
                 Required for AI formatting. Get a free key at{" "}
                 <a
@@ -635,8 +586,7 @@ export default function SettingsPage() {
                 >
                   ai.dev
                 </a>
-                . Stored locally on this machine only — never synced across
-                devices.
+                . Stored locally — never synced.
               </>
             }
             last
@@ -707,7 +657,7 @@ export default function SettingsPage() {
 
         <SettingRow
           label="Export history"
-          description="Save all your session transcripts as a JSON file. Useful for backup or migrating to another app."
+          hint="Save all your session transcripts as a JSON file. Useful for backup or migrating to another app."
         >
           <Button
             variant="subtle"
@@ -721,7 +671,7 @@ export default function SettingsPage() {
 
         <SettingRow
           label="Keep sessions local"
-          description="Don't sync transcripts to the cloud. Settings and modes still sync."
+          hint="Don't sync transcripts to the cloud. Settings and modes still sync."
           last
         >
           <Toggle

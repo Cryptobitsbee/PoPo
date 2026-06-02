@@ -44,12 +44,24 @@ export default function SettingsGroup({
       >
         <h2
           style={{
-            fontFamily: "var(--font-pixel-grid)",
-            fontSize: "var(--text-xs)",
+            // Session 53: bumped from --font-pixel-grid →
+            // --font-pixel-square so group labels (RECORDING /
+            // TRANSCRIPTION / etc.) actually render legibly. Grid
+            // is a graph-paper variant that, like Line, drops detail
+            // at small sizes. Square is the readable workhorse.
+            //
+            // Also bumped --text-xs → --text-sm and --text-ghost →
+            // --text-secondary so these section dividers carry the
+            // visual weight users need to scan a long Settings page.
+            // Letter-spacing 0.12em + uppercase keeps them clearly
+            // identifiable as section headers (vs. the row labels
+            // below them which are mixed-case).
+            fontFamily: "var(--font-pixel-square)",
+            fontSize: "var(--text-sm)",
             lineHeight: 1.2,
-            color: "var(--text-ghost)",
+            color: "var(--text-secondary)",
             textTransform: "uppercase",
-            letterSpacing: "0.1em",
+            letterSpacing: "0.12em",
             fontWeight: 500,
             margin: 0,
           }}

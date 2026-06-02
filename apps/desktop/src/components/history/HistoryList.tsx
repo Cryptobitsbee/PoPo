@@ -233,12 +233,15 @@ function SectionHeader({
       <h2
         style={{
           margin: 0,
-          fontFamily: "var(--font-pixel-grid)",
-          fontSize: "var(--text-xs)",
+          // Session 53: matched SettingsGroup heading style —
+          // square font + text-sm + secondary + 0.12em uppercase
+          // for consistent legible section dividers across pages.
+          fontFamily: "var(--font-pixel-square)",
+          fontSize: "var(--text-sm)",
           fontWeight: 500,
           color: "var(--text-secondary)",
           textTransform: "uppercase",
-          letterSpacing: "0.06em",
+          letterSpacing: "0.12em",
         }}
       >
         {label}
@@ -247,7 +250,9 @@ function SectionHeader({
         style={{
           fontFamily: "var(--font-pixel-grid)",
           fontSize: "var(--text-xs)",
-          color: "var(--text-ghost)",
+          // Session 54: ghost → secondary so the per-section count
+          // (e.g. "1", "58") is readable next to the bucket label.
+          color: "var(--text-secondary)",
           fontVariantNumeric: "tabular-nums",
         }}
       >

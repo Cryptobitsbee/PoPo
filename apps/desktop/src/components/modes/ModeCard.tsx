@@ -160,6 +160,17 @@ export default function ModeCard({
         }}
       >
         <Chip>{mode.language ?? "any language"}</Chip>
+        {mode.translateTo && (
+          <>
+            <span style={{ color: "var(--text-ghost)" }}>·</span>
+            <Chip>
+              {/* Translation badge — e.g. "→ Hindi" — makes it
+                  unmistakable at a glance which modes translate.
+                  Session 51 — feature #12. */}
+              → {translateLabel(mode.translateTo)}
+            </Chip>
+          </>
+        )}
         <span style={{ color: "var(--text-ghost)" }}>·</span>
         <span>
           {mode.usageCount} {mode.usageCount === 1 ? "use" : "uses"}
@@ -285,6 +296,44 @@ function formatOutputFormat(f: Mode["outputFormat"]): string {
       return "raw";
     default:
       return f;
+  }
+}
+
+/**
+ * Short display label for a `translateTo` BCP-47 code, e.g.
+ *   "hi-IN" → "Hindi"
+ *   "en-US" → "English"
+ *   "es-ES" → "Spanish"
+ *
+ * Falls back to the raw code for unknown values so misconfigured
+ * modes still render readably. Session 51 — feature #12.
+ */
+function translateLabel(code: string): string {
+  switch (code) {
+    case "en-US":
+    case "en-GB":
+    case "en-IN":
+      return "English";
+    case "hi-IN":
+      return "Hindi";
+    case "te-IN":
+      return "Telugu";
+    case "ta-IN":
+      return "Tamil";
+    case "bn-IN":
+      return "Bengali";
+    case "mr-IN":
+      return "Marathi";
+    case "es-ES":
+      return "Spanish";
+    case "fr-FR":
+      return "French";
+    case "de-DE":
+      return "German";
+    case "ja-JP":
+      return "Japanese";
+    default:
+      return code;
   }
 }
 

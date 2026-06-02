@@ -127,6 +127,28 @@
 
 ## Pending / Polish
 
+## Sessions 39–56 — Mega sprint (this chat)
+
+- [x] Cross-webview sync (switcher + pill + appIcons)
+- [x] SEED_MODES v10 (prompt-injection-resistant, ALLOWED/FORBIDDEN)
+- [x] Mic capture overhaul (no AGC, channel-0-only, 8× fixed gain)
+- [x] WAV storage normalization for audible playback
+- [x] v0.2 Feature Roadmap (`docs/ROADMAP.md`)
+- [x] #17 Dictionary pinning
+- [x] #19 First-run hotkey hint overlay
+- [x] #20 Bubble opacity slider (UI later removed; infra kept)
+- [x] #12 Translation mode
+- [x] Pill always-on-top reassertion (2s timer)
+- [x] Pill 30% smaller sleep + brighter border
+- [x] App icon swap (new logo + gen script)
+- [x] Typography/contrast overhaul (font vars + ghost color + headings)
+- [x] Window controls: maximize + z-index above modals
+- [x] InfoHint tooltip pattern (Settings + ModeEditor)
+- [x] Live pill waveform: rolling BarHistory
+- [x] History waveform: Rust-side peak computation (cmd_get_audio_peaks)
+- [x] History: copy feedback (✓), delete confirmation (ConfirmDialog), play without expand
+
+
 ## Session 31 — Snippets + Dictionary + cleanup
 
 - [x] **Snippets (text expansion)** — FULL STACK + RUNTIME-VERIFIED

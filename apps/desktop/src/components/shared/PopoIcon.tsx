@@ -1,115 +1,82 @@
 /**
- * PopoIcon — the canonical app icon.
+ * PopoIcon — the canonical app icon (in-app render).
  *
- * This renders the exact same glyph as `src-tauri/icons/icon.ico`:
- * a warm-white rounded-square background with three dark waveform
- * bars inside. Use it anywhere the user should see "popo the app"
- * (splash screen, sidebar top-left, system uninstaller branding).
+ * Session 56 redesign. Renders the SAME visual treatment as the
+ * baked taskbar/installer icons (see `scripts/gen-icons-from-png.mjs`):
  *
- * The proportions mirror `scripts/gen-icons-from-svg.mjs` exactly —
- * both the SVG here and the PNG/ICO rasterizer share the same
- * CANVAS/BAR_W/GAP/height constants, so what the user sees inside
- * the app is pixel-identical to what they see in the taskbar.
+ *   - Black rounded square (#0a0a0a → #161616 top-down gradient)
+ *   - 18.75% corner radius (iOS / macOS / modern Windows tile convention)
+ *   - Subtle 1-px rim highlight at rgba(255,255,255,0.08)
+ *   - Stronger top-half rim at rgba(255,255,255,0.16) for the
+ *     dome-light effect
+ *   - User's white mark from `/popo-mark.png` composited at 70%
+ *     of canvas size, centered (matches Apple HIG icon padding)
  *
- * Default size is 64 px. For subtler use (sidebar top-left), pass
- * a smaller size like 24. For the hero reveal in FirstRunOverlay,
- * 96+ works great.
+ * Use anywhere the user should see "popo the app" (FirstRunOverlay
+ * welcome step, TrayIllustration step, marketing surfaces).
+ *
+ * Why this isn't an SVG embed of the new mark:
+ *   The mark is a high-resolution raster (the user-provided PNG),
+ *   not a clean SVG geometry. Composing the rim-light treatment in
+ *   pure SVG + an <img> overlay is the most faithful in-DOM render
+ *   without re-encoding the mark every page load.
+ *
+ * The previous `mono` / `bg` / `bar` props are removed — the new
+ * treatment is monochrome by design (white logo on black tile).
+ * If you need a flat in-app glyph (no rounded tile), use
+ * `PopoMark` instead.
  */
 
 export interface PopoIconProps {
-  /** Edge length in px of the rendered SVG. Default 64. */
+  /** Edge length in px of the rendered tile. Default 64. */
   size?: number;
-  /** Override background fill. Defaults to --text-primary (#EDEBE6). */
-  bg?: string;
-  /** Override bar fill. Defaults to --bg-base (#0D0D0D). */
-  bar?: string;
-  /**
-   * When true, render bars-only on a transparent background.
-   * Useful for the sidebar where a full warm-white square would be
-   * too loud. The bars take the `bar` color (or --text-primary by
-   * default in mono mode).
-   */
-  mono?: boolean;
 }
 
-// Proportions from the icon generator — 512px master canvas, 96px
-// corner radius (18.75%), three dark rounded-cap bars with centered
-// short/tall/medium heights. We scale by setting the svg viewBox to
-// 0 0 512 512 so any `size` just resamples proportionally.
-const CANVAS = 512;
-const BG_RADIUS = 96;
-const BAR_W = 80;
-const BAR_RX = BAR_W / 2;
-const GAP = 28;
-const TOTAL_W = BAR_W * 3 + GAP * 2;
-const PAD_X = (CANVAS - TOTAL_W) / 2;
-const LEFT_X = PAD_X;
-const MID_X = LEFT_X + BAR_W + GAP;
-const RIGHT_X = MID_X + BAR_W + GAP;
-const SHORT_H = 144;
-const TALL_H = 336;
-const MEDIUM_H = 208;
-const SHORT_Y = (CANVAS - SHORT_H) / 2;
-const TALL_Y = (CANVAS - TALL_H) / 2;
-const MEDIUM_Y = (CANVAS - MEDIUM_H) / 2;
+const RADIUS_RATIO = 0.1875; // 18.75% — matches the icon script.
+const LOGO_RATIO = 1.0; // Logo fills full tile (user designed it at correct padding).
 
-export default function PopoIcon({
-  size = 64,
-  bg,
-  bar,
-  mono = false,
-}: PopoIconProps) {
-  const bgFill = bg ?? "var(--text-primary)";
-  const barFill = mono ? (bar ?? "var(--text-primary)") : (bar ?? "var(--bg-base)");
+export default function PopoIcon({ size = 64 }: PopoIconProps) {
+  const radius = Math.round(size * RADIUS_RATIO);
+  const logoSize = Math.round(size * LOGO_RATIO);
 
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${CANVAS} ${CANVAS}`}
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="popo"
+    <div
       role="img"
+      aria-label="popo"
+      style={{
+        position: "relative",
+        width: size,
+        height: size,
+        borderRadius: radius,
+        // Top-down gradient matching the baked icon's #161616 → #0a0a0a.
+        background: "linear-gradient(180deg, #161616 0%, #0a0a0a 100%)",
+        // Rim light: a faint 1-px inset shadow gives the rounded edge
+        // a subtle highlight without the busy-ness of a stroke.
+        // Stacked: subtle full-perimeter rim + stronger top-half dome.
+        boxShadow:
+          "inset 0 0 0 1px rgba(255, 255, 255, 0.08), " +
+          "inset 0 1px 0 rgba(255, 255, 255, 0.16)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        // Hint that this is a single visual unit so child <img> drag
+        // doesn't accidentally offer to drag-pickup the mark.
+        userSelect: "none",
+        flexShrink: 0,
+      }}
     >
-      {!mono && (
-        <rect
-          x="0"
-          y="0"
-          width={CANVAS}
-          height={CANVAS}
-          rx={BG_RADIUS}
-          ry={BG_RADIUS}
-          fill={bgFill}
-        />
-      )}
-      <rect
-        x={LEFT_X}
-        y={SHORT_Y}
-        width={BAR_W}
-        height={SHORT_H}
-        rx={BAR_RX}
-        ry={BAR_RX}
-        fill={barFill}
+      <img
+        src="/popo-mark.png"
+        width={logoSize}
+        height={logoSize}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        style={{
+          display: "block",
+          pointerEvents: "none",
+        }}
       />
-      <rect
-        x={MID_X}
-        y={TALL_Y}
-        width={BAR_W}
-        height={TALL_H}
-        rx={BAR_RX}
-        ry={BAR_RX}
-        fill={barFill}
-      />
-      <rect
-        x={RIGHT_X}
-        y={MEDIUM_Y}
-        width={BAR_W}
-        height={MEDIUM_H}
-        rx={BAR_RX}
-        ry={BAR_RX}
-        fill={barFill}
-      />
-    </svg>
+    </div>
   );
 }

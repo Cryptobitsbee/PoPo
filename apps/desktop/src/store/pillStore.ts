@@ -41,5 +41,9 @@ export const usePillStore = create<PillStore>((set) => ({
    */
   setError: (error) =>
     set(error.severity === "info" ? { error } : { error, state: "error" }),
-  clearError: () => set({ error: undefined }),
+  clearError: () =>
+    set((current) => ({
+      error: undefined,
+      state: current.state === "error" ? "sleep" : current.state,
+    })),
 }));

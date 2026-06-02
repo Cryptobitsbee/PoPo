@@ -44,26 +44,24 @@ export default function Sidebar() {
     >
       {/*
         Top 40px drag region. The glyph sits inside it, centered.
-        data-tauri-drag-region is inherited by children, so clicking the
-        glyph area drags the window. That's intentional per brief §3.
+        Session 56: bumped height from 40 → 56 px to give the larger
+        logo (28 px, up from 16) comfortable breathing room within
+        the drag zone. NavItems below still click-trigger normally.
       */}
       <div
         data-tauri-drag-region
         style={{
-          height: 40,
+          height: 72,
           width: "100%",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
+          // 72px container with 40px logo = 16px padding top+bottom.
+          // Feels balanced without cramping the nav items below.
         }}
       >
-        {/* Subtle quiet-tone 3-bars glyph — fits the calm sidebar tone
-            much better than the full warm-white icon tile (which stays
-            reserved for external touchpoints: taskbar, splash,
-            installer sidebar). Matches brief §3 Sidebar:
-            "16px PopoMark in --text-ghost". */}
-        <PopoMark />
+        <PopoMark size={40} />
       </div>
 
       {/* Top nav group — vertically centered in remaining space */}
@@ -106,10 +104,16 @@ export default function Sidebar() {
       <div
         style={{
           marginBottom: 16,
+          // Session 55 retune: was text-2xs (9 px) + ghost (1.7:1
+          // contrast) which rendered as nearly-invisible. Bumped to
+          // text-xs (11 px) + secondary (~4.5:1 contrast) so the
+          // version is actually findable. Still subordinate to
+          // anything else in the sidebar (icons are 18 px primary)
+          // — just no longer fighting the user.
           fontFamily: "var(--font-pixel-grid)",
-          fontSize: "var(--text-2xs)",
+          fontSize: "var(--text-xs)",
           lineHeight: 1.2,
-          color: "var(--text-ghost)",
+          color: "var(--text-secondary)",
           letterSpacing: "0.02em",
         }}
       >

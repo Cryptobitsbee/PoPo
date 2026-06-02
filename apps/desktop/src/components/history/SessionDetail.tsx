@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Play,
   Pause,
@@ -47,6 +47,10 @@ export interface SessionDetailProps {
   session: Session;
   onCopy: () => void;
   onDelete: () => void;
+  /** When true, start playback as soon as audio source is ready. */
+  autoPlay?: boolean;
+  /** Called after auto-play was initiated so parent can reset the flag. */
+  onDidAutoPlay?: () => void;
 }
 
 const BAR_COUNT = 64;
@@ -55,6 +59,8 @@ export default function SessionDetail({
   session,
   onCopy,
   onDelete,
+  autoPlay,
+  onDidAutoPlay,
 }: SessionDetailProps) {
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [loadingAudio, setLoadingAudio] = useState(false);
@@ -87,18 +93,15 @@ export default function SessionDetail({
       }
 
       // Priority 2: local path.
+      // Session 56: ALWAYS load bytes via Rust command instead of the
+      // convertFileSrc shortcut. The old shortcut set an asset://
+      // URL that the <audio> element could play but that fetch()
+      // couldn't read (WebView2 doesn't support fetching the asset
+      // protocol). Without raw bytes, decodeAudioData in the peaks
+      // effect would fail and the waveform stayed as a static
+      // placeholder pattern. Loading bytes guarantees BOTH playback
+      // (via Blob URL) AND waveform decoding (via audioBytesRef).
       if (session.audioStoragePath) {
-        // Try asset:// first (cheapest + fastest).
-        try {
-          const asset = convertFileSrc(session.audioStoragePath);
-          if (asset) {
-            setAudioSrc(asset);
-            return;
-          }
-        } catch {
-          /* fall through to byte-read */
-        }
-
         setLoadingAudio(true);
         try {
           const bytes = await invoke<number[]>("cmd_read_audio_bytes", {
@@ -141,70 +144,66 @@ export default function SessionDetail({
     };
   }, [session.audioDownloadUrl, session.audioStoragePath]);
 
-  // ── Decode + compute peaks for the waveform ─────────────────────
+  // ── Compute peaks for the waveform (Rust-side) ─────────────
+  // Session 56: moved peak computation to Rust (`cmd_get_audio_peaks`)
+  // instead of doing it in the browser via Web Audio API's
+  // `decodeAudioData`. The old browser-based approach silently failed
+  // in WebView2 (fetch of asset:// URLs isn't supported, and the
+  // ArrayBuffer copy chain was fragile), leaving peaks as null and
+  // the waveform as a static placeholder.
+  //
+  // The Rust command reads the WAV file natively with `hound`,
+  // computes peak-per-bucket, normalizes to 0..1, and returns a tiny
+  // JSON array of 64 floats. Zero Web Audio, zero decoding fragility.
   useEffect(() => {
-    if (!audioSrc) return;
-    let cancelled = false;
-
-    async function decode() {
-      try {
-        // Prefer the bytes we already have (local path). For remote
-        // URLs (cloud / asset://) fetch them fresh.
-        let arrayBuffer: ArrayBuffer;
-        if (audioBytesRef.current) {
-          arrayBuffer = audioBytesRef.current.slice(0);
-        } else {
-          const res = await fetch(audioSrc!);
-          arrayBuffer = await res.arrayBuffer();
-        }
-        if (cancelled) return;
-
-        // Web Audio decodeAudioData needs an AudioContext. We create
-        // one on demand, decode, then close it — we don't need it for
-        // playback (the <audio> element handles that independently).
-        const Ctor =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext })
-            .webkitAudioContext;
-        const ctx = new Ctor();
-        const buf = await ctx.decodeAudioData(arrayBuffer);
-        void ctx.close();
-        if (cancelled) return;
-
-        const channel = buf.getChannelData(0);
-        const perBucket = Math.max(1, Math.floor(channel.length / BAR_COUNT));
-        const out = new Array<number>(BAR_COUNT);
-        let globalMax = 0;
-        for (let i = 0; i < BAR_COUNT; i++) {
-          const start = i * perBucket;
-          const end = Math.min(start + perBucket, channel.length);
-          let max = 0;
-          for (let j = start; j < end; j++) {
-            const v = Math.abs(channel[j]);
-            if (v > max) max = v;
-          }
-          out[i] = max;
-          if (max > globalMax) globalMax = max;
-        }
-        // Normalize to 0..1. Guard against silent audio.
-        if (globalMax > 0) {
-          for (let i = 0; i < BAR_COUNT; i++) out[i] /= globalMax;
-        }
-        setPeaks(out);
-      } catch (e) {
-        if (cancelled) return;
-        // Not fatal — the player still works, just without a waveform.
-        // eslint-disable-next-line no-console
-        console.warn("[popo] waveform decode failed:", e);
-        setPeaks(null);
-      }
+    // Only local files have a path we can pass to Rust.
+    if (!session.audioStoragePath) {
+      // For cloud-only sessions (no local WAV), we can't compute
+      // peaks server-side. Leave as null (placeholder renders).
+      // A future enhancement could download the cloud file first.
+      setPeaks(null);
+      return;
     }
 
-    void decode();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await invoke<number[]>("cmd_get_audio_peaks", {
+          path: session.audioStoragePath,
+          barCount: BAR_COUNT,
+        });
+        if (cancelled) return;
+        if (result && result.length > 0) {
+          setPeaks(result);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.warn("[popo] cmd_get_audio_peaks failed:", e);
+        setPeaks(null);
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [audioSrc]);
+  }, [session.audioStoragePath]);
+
+  // Auto-play: when the Play button was clicked from the collapsed
+  // row, the parent passes autoPlay=true. We wait until audioSrc is
+  // resolved, then trigger playback once.
+  useEffect(() => {
+    if (!autoPlay || !audioSrc) return;
+    // Small delay so the <audio> element has time to mount + set src.
+    const t = setTimeout(() => {
+      const el = audioRef.current;
+      if (el) {
+        el.play().catch(() => {});
+      }
+      onDidAutoPlay?.();
+    }, 150);
+    return () => clearTimeout(t);
+  }, [autoPlay, audioSrc, onDidAutoPlay]);
 
   // Stop playback on unmount.
   useEffect(() => {
@@ -570,14 +569,17 @@ function Waveform({ peaks, progress, onSeek }: WaveformProps) {
       (_, i) => 0.14 + 0.06 * Math.sin(i * 0.45),
     );
 
-  // SVG coordinate system: 1000 wide × 40 tall. We scale via
-  // preserveAspectRatio + width:100%.
+  // SVG coordinate system: 1000 wide × 40 tall.
   const W = 1000;
   const H = 40;
-  const gapRatio = 0.35; // gap takes 35% of the slot
+  // Session 56: bars made MUCH narrower (3px visual, was ~10px).
+  // The old fat bars looked like uniform dots because when height≈width
+  // (both ~10px) and rx=half-width, you get a circle. Thin bars
+  // (width 3px, height 4–40px) look like sticks/pillars — the classic
+  // waveform visual where height variation reads immediately.
   const slot = W / BAR_COUNT;
-  const barW = slot * (1 - gapRatio);
-  const minBarH = 2; // floor so silence still reads as "bars"
+  const barW = Math.min(slot * 0.35, 5); // cap at 5 SVG-units wide (~3px rendered)
+  const minBarH = 3; // floor so silence still reads as a visible dot
   const playheadX = progress * W;
 
   const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -600,7 +602,12 @@ function Waveform({ peaks, progress, onSeek }: WaveformProps) {
       }}
     >
       {effective.map((peak, i) => {
-        const h = Math.max(minBarH, peak * H);
+        // Apply a gentle power curve to exaggerate height differences.
+        // Without this, peaks clustered in 0.3–0.6 all look similar.
+        // pow(peak, 0.7) spreads the mid-range out while keeping
+        // quiet parts visible.
+        const curved = Math.pow(peak, 0.7);
+        const h = Math.max(minBarH, curved * H);
         const x = i * slot + (slot - barW) / 2;
         const y = (H - h) / 2;
         const played = (i + 0.5) * slot <= playheadX;
@@ -618,7 +625,7 @@ function Waveform({ peaks, progress, onSeek }: WaveformProps) {
           />
         );
       })}
-      {/* Playhead line — barely visible until it enters colored bars */}
+      {/* Playhead line */}
       <line
         x1={playheadX}
         x2={playheadX}

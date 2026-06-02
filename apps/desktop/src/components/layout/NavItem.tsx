@@ -54,12 +54,17 @@ export default function NavItem({ to, label, icon: Icon }: NavItemProps) {
             <Icon
               size={18}
               weight="regular"
+              // Session 55 retune: was ghost → secondary → primary
+              // (default → hover → active). Default ghost was 1.7:1
+              // contrast — invisible. Now: default secondary (~4.5:1,
+              // visible at rest), hover/active primary (full bright).
+              // The active state ALSO gets the bg lift, so hover and
+              // active are visually distinct: same icon color but
+              // active has the elevated panel underneath.
               color={
-                isActive
+                isActive || hovered
                   ? "var(--text-primary)"
-                  : hovered
-                    ? "var(--text-secondary)"
-                    : "var(--text-ghost)"
+                  : "var(--text-secondary)"
               }
               style={{ transition: "color 120ms ease" }}
             />

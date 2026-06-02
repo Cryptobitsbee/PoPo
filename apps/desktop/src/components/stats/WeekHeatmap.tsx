@@ -66,9 +66,15 @@ export default function WeekHeatmap({ days }: WeekHeatmapProps) {
               <HeatmapCell intensity={intensity} delayMs={i * 40} />
               <span
                 style={{
+                  // Session 54: bumped text-2xs → text-xs and ghost
+                  // → secondary (for non-today) so weekday names are
+                  // actually readable. text-2xs is too small even
+                  // with the readable square font.
                   fontFamily: "var(--font-pixel-grid)",
-                  fontSize: "var(--text-2xs)",
-                  color: d.isToday ? "var(--text-secondary)" : "var(--text-ghost)",
+                  fontSize: "var(--text-xs)",
+                  color: d.isToday
+                    ? "var(--text-primary)"
+                    : "var(--text-secondary)",
                   lineHeight: 1.2,
                 }}
               >
@@ -76,8 +82,10 @@ export default function WeekHeatmap({ days }: WeekHeatmapProps) {
               </span>
               <span
                 style={{
+                  // Session 54: bumped text-2xs → text-xs to match
+                  // the weekday label above.
                   fontFamily: "var(--font-pixel-grid)",
-                  fontSize: "var(--text-2xs)",
+                  fontSize: "var(--text-xs)",
                   color: "var(--text-secondary)",
                   lineHeight: 1.2,
                   fontVariantNumeric: "tabular-nums",

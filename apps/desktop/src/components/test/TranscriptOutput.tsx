@@ -43,12 +43,16 @@ export default function TranscriptOutput({
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <label
         style={{
-          fontFamily: "var(--font-pixel-grid)",
-          fontSize: "var(--text-xs)",
-          color: "var(--text-ghost)",
+          // Session 53: unified section-heading style — was
+          // pixel-grid + text-xs + ghost which rendered as faint
+          // dotted text users couldn't easily scan.
+          fontFamily: "var(--font-pixel-square)",
+          fontSize: "var(--text-sm)",
+          color: "var(--text-secondary)",
           marginBottom: "var(--sp-2)",
           textTransform: "uppercase",
-          letterSpacing: "0.1em",
+          letterSpacing: "0.12em",
+          fontWeight: 500,
         }}
       >
         Output

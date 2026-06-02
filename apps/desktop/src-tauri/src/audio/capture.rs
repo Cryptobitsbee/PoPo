@@ -6,14 +6,15 @@
 //   1. **Multi-channel averaging dilutes mic arrays.** WASAPI's
 //      `IAudioClient::GetMixFormat` (which cpal's
 //      `default_input_config` calls) can report 4–8 channels for a
-//      mic-array device even when only channel 0 carries voice
+//      mic-array device even when only one channel carries voice
 //      (the other channels are reference signals used by Windows
 //      AEC, beam-forming, etc.). Our old code averaged ALL channels
 //      and divided by N, so a peak-0.1 voice on channel 0 of a
 //      4-channel array became 0.025; on an 8-channel array it
-//      became 0.0125. Other recording apps (Audacity, OBS,
-//      Windows Voice Recorder) DON'T do that — they pick channel 0
-//      for mono recording. v2 does the same.
+//      became 0.0125. v2 stopped averaging and picked channel 0.
+//      Session 52 improves that further: laptop mic arrays do not
+//      always put the useful voice signal on channel 0, so each audio
+//      callback now picks the strongest channel for that buffer.
 //
 //   2. **AGC silence threshold rejected real voice as noise.** The
 //      `if rms > 0.001` gate held gain at 1.0 forever for any input
@@ -27,11 +28,12 @@
 // New pipeline:
 //
 //   cpal input stream (WASAPI shared-mode on Windows)
-//      └─ sample callback picks ONE channel (channel 0) and converts
+//      └─ sample callback picks ONE strongest channel and converts
 //         it to f32 in [-1, 1] using the standard scale for the
 //         device's reported sample format (handles every cpal
 //         SampleFormat — i8/i16/i24/i32/i64/u8/u16/u24/u32/u64/f32/f64).
-//          └─ pushes into VecDeque<f32> behind a Mutex.
+//          └─ applies fixed input boost and pushes into VecDeque<f32>
+//             behind a Mutex.
 //             size-capped at MAX_BUFFER_SAMPLES (drops oldest).
 //
 // The VecDeque is read by:
@@ -101,8 +103,8 @@ pub struct CaptureHandle {
     /// After channel-pick this is also the effective mono sample rate.
     pub sample_rate: u32,
     /// Number of channels the device is capturing. Kept for
-    /// diagnostics only — all callers see mono samples (we pick
-    /// channel 0).
+    /// diagnostics only — all callers see mono samples (we pick the
+    /// strongest channel per callback).
     pub channels: u16,
     /// Human-readable device name as cpal reported it. Surfaced into
     /// pill error messages when a recording produces silent audio so
@@ -123,9 +125,10 @@ pub struct CaptureHandle {
 ///
 /// Backwards-compatible field names (`peak_pre_agc_bits`,
 /// `peak_post_agc_bits`) kept even though Session 45 removed AGC,
-/// so the old `on_release` log-line code keeps compiling. Both now
-/// hold the SAME value (the raw mic peak) — there's no longer a
-/// "pre/post AGC" distinction since we don't AGC.
+/// so the old `on_release` log-line code keeps compiling.
+/// `peak_pre_agc_bits` is the raw selected-channel peak, while
+/// `peak_post_agc_bits` is the same signal after fixed input boost.
+/// There is still no adaptive AGC.
 pub struct CaptureDiagnostics {
     /// Number of times the cpal callback has fired since the stream
     /// started. Zero means cpal opened the device but never delivered
@@ -137,8 +140,8 @@ pub struct CaptureDiagnostics {
     /// Encoded as u32 bits via `f32::to_bits` / `f32::from_bits` for
     /// lock-free atomic max via `compare_exchange_weak`.
     pub peak_pre_agc_bits: AtomicU32,
-    /// Same as `peak_pre_agc_bits` since Session 45 removed AGC. Kept
-    /// to preserve the existing `on_release` diagnostic log format.
+    /// Highest |sample| observed after fixed input boost. Kept under
+    /// the old field name to preserve the existing diagnostic API.
     pub peak_post_agc_bits: AtomicU32,
 }
 
@@ -157,7 +160,7 @@ impl CaptureDiagnostics {
         f32::from_bits(self.peak_pre_agc_bits.load(Ordering::Relaxed))
     }
 
-    /// Same as `peak_pre_agc` since Session 45 removed AGC.
+    /// Read the current post-input-boost peak as f32.
     pub fn peak_post_agc(&self) -> f32 {
         f32::from_bits(self.peak_post_agc_bits.load(Ordering::Relaxed))
     }
@@ -202,12 +205,11 @@ unsafe impl Sync for SafeStream {}
 ///     back to the default device instead of failing.
 ///   - `None` — open the system default input device.
 ///
-/// Channel handling: if the device reports multi-channel, we capture
-/// channel 0 only. This matches what every standard recording app
-/// does for mono capture (Audacity, OBS, Windows Voice Recorder,
-/// Discord's monitoring). It avoids the dilution bug where averaging
-/// across reference / silence channels of a Microphone Array
-/// destroys signal level.
+/// Channel handling: if the device reports multi-channel, each input
+/// callback chooses the strongest channel and captures only that one.
+/// This avoids both failure modes seen on Windows laptop mic arrays:
+/// averaging voice with silent/reference channels, and assuming voice
+/// always arrives on channel 0.
 pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
     let host = cpal::default_host();
 
@@ -255,13 +257,13 @@ pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
         .default_input_config()
         .context("failed to get default input config")?;
 
-    let sample_format = supported.sample_format();
+    let default_sample_format = supported.sample_format();
     let sample_rate = supported.sample_rate().0;
     let channels = supported.channels();
     let stream_config: cpal::StreamConfig = supported.into();
 
     tracing::info!(
-        "cpal input: device={device_name} sr={sample_rate}Hz channels={channels} format={sample_format:?} buffer={:?}",
+        "cpal input: device={device_name} sr={sample_rate}Hz channels={channels} default_format={default_sample_format:?} buffer={:?}",
         stream_config.buffer_size
     );
 
@@ -278,27 +280,70 @@ pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
     // We support EVERY cpal SampleFormat to avoid silent failures on
     // unusual Windows devices (some 24-bit-in-i32 mic arrays show up
     // as I32, some studio interfaces show up as F64, etc.).
-    let stream = match sample_format {
-        // ── Floating-point formats (already in [-1, 1] range) ────
-        cpal::SampleFormat::F32 => build_input_f32(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::F64 => build_input_f64(&device, &stream_config, &samples, &diag, ch)?,
+    let fallback_to_native = || {
+        Ok(match default_sample_format {
+            // ── Floating-point formats (already in [-1, 1] range) ────
+            cpal::SampleFormat::F32 => {
+                build_input_f32(&device, &stream_config, &samples, &diag, ch)?
+            }
+            cpal::SampleFormat::F64 => {
+                build_input_f64(&device, &stream_config, &samples, &diag, ch)?
+            }
 
-        // ── Signed integer formats (zero-centred) ─────────────────
-        cpal::SampleFormat::I8 => build_input_i8(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::I16 => build_input_i16(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::I32 => build_input_i32(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::I64 => build_input_i64(&device, &stream_config, &samples, &diag, ch)?,
+            // ── Signed integer formats (zero-centred) ─────────────────
+            cpal::SampleFormat::I8 => build_input_i8(&device, &stream_config, &samples, &diag, ch)?,
+            cpal::SampleFormat::I16 => {
+                build_input_i16(&device, &stream_config, &samples, &diag, ch)?
+            }
+            cpal::SampleFormat::I32 => {
+                build_input_i32(&device, &stream_config, &samples, &diag, ch)?
+            }
+            cpal::SampleFormat::I64 => {
+                build_input_i64(&device, &stream_config, &samples, &diag, ch)?
+            }
 
-        // ── Unsigned integer formats (origin = midpoint) ──────────
-        cpal::SampleFormat::U8 => build_input_u8(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::U16 => build_input_u16(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::U32 => build_input_u32(&device, &stream_config, &samples, &diag, ch)?,
-        cpal::SampleFormat::U64 => build_input_u64(&device, &stream_config, &samples, &diag, ch)?,
+            // ── Unsigned integer formats (origin = midpoint) ──────────
+            cpal::SampleFormat::U8 => build_input_u8(&device, &stream_config, &samples, &diag, ch)?,
+            cpal::SampleFormat::U16 => {
+                build_input_u16(&device, &stream_config, &samples, &diag, ch)?
+            }
+            cpal::SampleFormat::U32 => {
+                build_input_u32(&device, &stream_config, &samples, &diag, ch)?
+            }
+            cpal::SampleFormat::U64 => {
+                build_input_u64(&device, &stream_config, &samples, &diag, ch)?
+            }
 
-        other => {
-            return Err(anyhow!(
+            other => {
+                return Err(anyhow!(
                 "unsupported cpal sample format: {other:?} (this should not happen on Windows WASAPI)"
             ));
+            }
+        })
+    };
+
+    // Prefer a float stream on WASAPI when available. Browser
+    // getUserMedia/WebRTC and most voice stacks operate on normalized
+    // float audio; asking Windows for f32 avoids ambiguity around
+    // integer container formats on laptop mic arrays. If Windows
+    // rejects the f32 format for this endpoint, fall back to CPAL's
+    // native default format.
+    let stream = if default_sample_format == cpal::SampleFormat::F32 {
+        fallback_to_native()?
+    } else {
+        match build_input_f32(&device, &stream_config, &samples, &diag, ch) {
+            Ok(stream) => {
+                tracing::info!(
+                    "cpal input: using f32 shared-mode capture (native default was {default_sample_format:?})"
+                );
+                stream
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "cpal input: f32 shared-mode capture unsupported ({e:#}); falling back to {default_sample_format:?}"
+                );
+                fallback_to_native()?
+            }
         }
     };
 
@@ -317,9 +362,10 @@ pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
 // ─── Per-format input-stream builders ──────────────────────────────
 //
 // Each one takes interleaved frames in the device's native format,
-// picks channel 0, converts to f32 in [-1, 1], updates diagnostics,
-// and pushes into the ring buffer. No AGC, no compression, no
-// averaging across channels.
+// picks the strongest channel for the current callback, converts to
+// f32 in [-1, 1], applies fixed input boost, updates diagnostics, and
+// pushes into the ring buffer. No AGC, no compression, no averaging
+// across channels.
 
 /// Helper macro: same body, different sample type and to-f32
 /// conversion. Avoids 10 nearly-identical 25-line functions.
@@ -343,58 +389,94 @@ macro_rules! build_input_impl {
                     }
                     let cb_idx = diag_cb.callbacks.fetch_add(1, Ordering::Relaxed);
 
-                    // Track raw-mic peak and per-callback diagnostics
-                    // BEFORE pushing to the ring buffer.
-                    let mut peak: f32 = 0.0;
-                    let mut sum_abs: f32 = 0.0;
-                    let mut written: u64 = 0;
+                    // Laptop mic arrays can expose several channels where
+                    // the useful beamformed voice signal is not channel 0.
+                    // Pick the strongest channel for this callback instead
+                    // of averaging channels or hard-coding channel 0.
+                    const MAX_SCAN_CHANNELS: usize = 32;
+                    let scan_channels = ch_for_callback.min(MAX_SCAN_CHANNELS);
+                    let mut channel_sum_abs = [0.0f32; MAX_SCAN_CHANNELS];
+                    let mut channel_peak = [0.0f32; MAX_SCAN_CHANNELS];
+                    let mut frames_seen: u64 = 0;
+
+                    let mut scan_i = 0;
+                    while scan_i + ch_for_callback <= data.len() {
+                        for c in 0..scan_channels {
+                            let raw: f32 = $to_f32(data[scan_i + c]);
+                            let abs = raw.abs();
+                            channel_sum_abs[c] += abs;
+                            if abs > channel_peak[c] {
+                                channel_peak[c] = abs;
+                            }
+                        }
+                        frames_seen += 1;
+                        scan_i += ch_for_callback;
+                    }
+
+                    if frames_seen == 0 {
+                        return;
+                    }
+
+                    let mut selected_channel = 0usize;
+                    let mut best_sum_abs = channel_sum_abs[0];
+                    for c in 1..scan_channels {
+                        if channel_sum_abs[c] > best_sum_abs {
+                            best_sum_abs = channel_sum_abs[c];
+                            selected_channel = c;
+                        }
+                    }
+
+                    let raw_peak = channel_peak[selected_channel];
+                    let mut boosted_peak: f32 = 0.0;
+                    let mut boosted_sum_abs: f32 = 0.0;
 
                     let Ok(mut ring) = buf.lock() else { return };
 
                     // Walk frame-by-frame. Each frame is `ch_for_callback`
-                    // interleaved samples; we keep ONLY channel 0.
+                    // interleaved samples; we keep ONLY the strongest
+                    // selected channel.
                     let mut i = 0;
                     while i + ch_for_callback <= data.len() {
-                        // Pick channel 0 from the interleaved frame,
+                        // Pick the selected channel from the interleaved frame,
                         // convert to f32 in roughly [-1, 1].
-                        let raw: f32 = $to_f32(data[i]);
+                        let raw: f32 = $to_f32(data[i + selected_channel]);
                         // Apply fixed input boost (see INPUT_BOOST_GAIN
                         // doc above) and clamp to legal range. This
                         // is the SAME operation every voice app does
                         // internally; it is NOT AGC.
                         let mono: f32 = (raw * INPUT_BOOST_GAIN).clamp(-1.0, 1.0);
                         let abs = mono.abs();
-                        if abs > peak {
-                            peak = abs;
+                        if abs > boosted_peak {
+                            boosted_peak = abs;
                         }
-                        sum_abs += abs;
+                        boosted_sum_abs += abs;
                         push_cap(&mut ring, mono);
-                        written += 1;
                         i += ch_for_callback;
                     }
 
-                    fetch_max_f32(&diag_cb.peak_pre_agc_bits, peak);
-                    fetch_max_f32(&diag_cb.peak_post_agc_bits, peak);
+                    fetch_max_f32(&diag_cb.peak_pre_agc_bits, raw_peak);
+                    fetch_max_f32(&diag_cb.peak_post_agc_bits, boosted_peak);
                     diag_cb
                         .samples_written
-                        .fetch_add(written, Ordering::Relaxed);
+                        .fetch_add(frames_seen, Ordering::Relaxed);
 
                     // Verbose log on the first three callbacks. This
                     // is the canonical "is the device actually
                     // delivering data" check.
                     if cb_idx < 3 {
-                        let mean = if written > 0 {
-                            sum_abs / written as f32
+                        let mean = if frames_seen > 0 {
+                            boosted_sum_abs / frames_seen as f32
                         } else {
                             0.0
                         };
                         tracing::info!(
-                            "cpal callback #{cb_idx}: frames={written} peak={peak:.4} mean_abs={mean:.5}"
+                            "cpal callback #{cb_idx}: frames={frames_seen} channel={selected_channel}/{ch_for_callback} raw_peak={raw_peak:.4} boosted_peak={boosted_peak:.4} mean_abs={mean:.5}"
                         );
                     } else if cb_idx % 250 == 0 {
                         tracing::debug!(
-                            "cpal callback #{cb_idx}: peak={:.4}",
-                            diag_cb.peak_pre_agc()
+                            "cpal callback #{cb_idx}: raw_peak={:.4} boosted_peak={:.4}",
+                            diag_cb.peak_pre_agc(),
+                            diag_cb.peak_post_agc()
                         );
                     }
                 },

@@ -129,6 +129,7 @@ pub fn run() {
             crate::commands::switcher::cmd_set_pending_forced_mode,
             crate::commands::switcher::cmd_clear_pending_forced_mode,
             audio_cmds::cmd_read_audio_bytes,
+            audio_cmds::cmd_get_audio_peaks,
             audio_cmds::cmd_get_audio_dir,
             test_cmds::cmd_test_dictate_start,
             test_cmds::cmd_test_dictate_stop,
@@ -422,6 +423,73 @@ pub fn run() {
                             if near != was_near {
                                 was_near = near;
                                 let _ = app_cursor.emit("pill:cursor:near", near);
+                            }
+                        }
+                    });
+                }
+            }
+
+            // --- Pill always-on-top reassertion (Windows-only) ---------
+            // The pill window is configured with `alwaysOnTop: true` in
+            // tauri.conf.json AND has WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW.
+            // Both are correct, but Windows still demotes topmost windows
+            // in several scenarios:
+            //
+            //   - Other apps explicitly call `SetWindowPos(HWND_TOPMOST)`
+            //     for their own windows (some apps assert it aggressively
+            //     on every focus change).
+            //   - Fullscreen apps (games, video players in exclusive
+            //     fullscreen) take the topmost slot for themselves and
+            //     evict everything else.
+            //   - UAC prompts, screensavers, the Win+L lock screen, and
+            //     occasionally just routine focus changes between
+            //     elevated apps will demote our window.
+            //   - Some Electron apps and certain games re-assert
+            //     topmost on every render frame, which can fight us.
+            //
+            // The standard mitigation — used by every long-lived
+            // tray/overlay app on Windows (Discord, Spotify Lyrics,
+            // Wispr Flow, etc.) — is to periodically re-assert
+            // HWND_TOPMOST. We do it every 2 seconds, which is
+            // imperceptible to the user but reliably keeps the pill
+            // visible.
+            //
+            // Cost: SetWindowPos is ~1 μs. Once every 2 s = effectively
+            // zero CPU.
+            #[cfg(target_os = "windows")]
+            {
+                let pill_hwnd_raw: Option<isize> = app
+                    .get_webview_window("pill")
+                    .and_then(|w| w.hwnd().ok())
+                    .map(|h| h.0 as isize);
+
+                if let Some(hwnd_raw) = pill_hwnd_raw {
+                    tauri::async_runtime::spawn(async move {
+                        use windows::Win32::Foundation::HWND;
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                        };
+
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            let pill_hwnd = HWND(hwnd_raw as *mut _);
+                            unsafe {
+                                // SWP_NOMOVE | SWP_NOSIZE: keep current
+                                //   geometry; we only want to change the
+                                //   z-order and the topmost flag.
+                                // SWP_NOACTIVATE: don't steal focus from
+                                //   whatever the user is actually using
+                                //   (the entire premise of the pill is
+                                //   that it never takes focus).
+                                let _ = SetWindowPos(
+                                    pill_hwnd,
+                                    HWND_TOPMOST,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                                );
                             }
                         }
                     });

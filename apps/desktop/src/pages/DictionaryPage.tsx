@@ -232,7 +232,9 @@ export default function DictionaryPage() {
             marginTop: "var(--sp-8)",
             fontFamily: "var(--font-pixel-grid)",
             fontSize: "var(--text-xs)",
-            color: "var(--text-ghost)",
+            // Session 54: ghost → secondary so "N phrases" is
+            // readable. ghost was disappearing on dark backgrounds.
+            color: "var(--text-secondary)",
             fontVariantNumeric: "tabular-nums",
           }}
         >
