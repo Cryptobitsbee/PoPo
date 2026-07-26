@@ -129,6 +129,26 @@
 
 ## Pending / Polish
 
+## Session 63 — GitHub identity and Partner Center proof build
+
+- [x] Origin and canonical tracked URLs migrated to
+  `https://github.com/Cryptobitsbee/PoPo`.
+- [x] #18 + Store profile committed/pushed as `3e02dc4` on
+  `feature/better-mic-errors` with matching upstream hash.
+- [x] Dedicated `tauri:build:store` embeds the WebView2 offline runtime; normal
+  builds retain the smaller download-bootstrapper profile.
+- [x] Standalone x64 NSIS build passed: 0.1.0, 209,649,076 bytes, SHA-256
+  `A17F9B56E977D8F7EB2F91B83371D81FCF5FA2A2BAC19F47DAF5EFDF830B9D47`.
+- [x] Generated NSIS verifies offline WebView2 plus `/silent /install`; Store
+  silent parameter is `/S`.
+- [x] Defender current signature `1.455.353.0` found zero detections.
+- [x] Partner Center field/signing/private-test handoff documented.
+- [ ] Upload blocker: inner `popo.exe` and installer both verify `NotSigned`;
+  Microsoft requires every installed PE and installer to chain to a trusted
+  code-signing certificate. Owner must sign/timestamp, verify, re-scan, and
+  host the immutable versioned EXE before submission.
+- [ ] After subscription renewal: #5 audio recovery after crash.
+
 ## Session 62 — Actionable microphone errors (#18)
 
 - [x] Structured every CPAL microphone-open/runtime error into stable unplugged,

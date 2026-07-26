@@ -4,6 +4,47 @@
 
 ## Current phase
 
+**SESSION 63 — Canonical GitHub migration and Microsoft Partner Center proof build.**
+
+Completed:
+- Canonical remote and tracked repository/release/security URLs now use
+  `https://github.com/Cryptobitsbee/PoPo`; no old canonical URL remains.
+- Session 62 microphone work plus Store packaging was committed as `3e02dc4`
+  (`Improve microphone errors and Store packaging`) and pushed to
+  `origin/feature/better-mic-errors`; local/upstream hashes match.
+- Added `tauri.store.conf.json` and `pnpm --filter desktop
+  tauri:build:store`. The Store overlay changes WebView2 to
+  `offlineInstaller`, satisfying Microsoft's standalone-installer rule without
+  making normal development/direct builds permanently 200 MiB.
+- Added `docs/MICROSOFT_PARTNER_CENTER_TESTING.md` with exact Partner Center
+  EXE fields, `/S`, versioned GitHub Release URL pattern, privacy/support
+  handoff, signature checks, and private-flight sequence.
+
+Verified local proof build from `3e02dc4`:
+- `popo.exe`: 0.1.0, 7.60 MiB, SHA-256
+  `3717843CC12486EA95439DCBA194F62E349142F403065C8A07A8484F5C8A3AC4`,
+  `NotSigned`.
+- `popo_0.1.0_x64-setup.exe`: 199.94 MiB (209,649,076 bytes), SHA-256
+  `A17F9B56E977D8F7EB2F91B83371D81FCF5FA2A2BAC19F47DAF5EFDF830B9D47`,
+  `NotSigned`.
+- Generated NSIS confirms `offlineInstaller`, embeds the x64 WebView2 runtime,
+  invokes it with `/silent /install`, and supports Store installer parameter
+  `/S`.
+- Current Microsoft Defender signature `1.455.353.0` (age 0) reported zero
+  detections for the exact installer. A `.sha256` sidecar is stored beside the
+  ignored artifact.
+
+Hard blocker before Partner Center EXE upload:
+- Microsoft requires the installer and every installed PE (including
+  `popo.exe`) to have a trusted code-signing chain. Both are currently
+  `NotSigned`; complete publisher/signing identity, sign+timestamp inner EXE,
+  rebuild, sign+timestamp installer, verify, re-scan, then host at an immutable
+  versioned HTTPS URL. The present file is for local proof/testing only.
+
+Next feature after the subscription renews: #5 audio recovery after crash.
+
+### Previous session context
+
 **SESSION 62 — Actionable microphone errors (#18).**
 
 Baseline handoff:
@@ -11,8 +52,8 @@ Baseline handoff:
   readiness`) and pushed to `origin/session-61-security-hardening`; local and
   remote hashes matched. GitHub redirected the old `Ganesh540-crypto/PoPo`
   remote to `Cryptobitsbee/PoPo`.
-- Current implementation work is on local branch `feature/better-mic-errors`
-  and is not committed or pushed.
+- Session 62 was later committed and pushed on `feature/better-mic-errors` as
+  `3e02dc4`, together with the canonical URL migration and Store profile.
 
 Completed implementation:
 - Added `audio/mic_error.rs` with stable unplugged, in-use,

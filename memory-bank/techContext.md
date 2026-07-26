@@ -46,7 +46,10 @@ This section supersedes legacy planning snippets later in this file.
 - **pnpm**: 9.x (workspaces) — **no npm, no yarn**
 - **Rust**: 1.80+ stable (MSRV 1.77 for Tauri v2)
 - **Windows SDK**: 10.0.22621.0+ for `windows-rs`
-- **WebView2 Runtime**: Evergreen (bundled bootstrapper at install)
+- **WebView2 Runtime**: Evergreen. Normal builds use Tauri's download
+  bootstrapper; Partner Center EXE builds run `pnpm --filter desktop
+  tauri:build:store`, whose config overlay embeds the x64 offline installer to
+  satisfy Microsoft's standalone-installer requirement.
 
 ## Frontend
 

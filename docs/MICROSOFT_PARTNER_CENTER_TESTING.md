@@ -17,6 +17,20 @@ pnpm --filter desktop tauri:build:store
 Store overlay: `apps/desktop/src-tauri/tauri.store.conf.json`
 Expected output: `apps/desktop/src-tauri/target/release/bundle/nsis/popo_0.1.0_x64-setup.exe`
 
+## Current local proof build
+
+Built from source commit `3e02dc4e1fae5393585a92fbbd770a9462d25f4c` on July 26, 2026:
+
+| Artifact | Size | SHA-256 | Authenticode |
+|---|---:|---|---|
+| `target/release/popo.exe` | 7.60 MiB | `3717843CC12486EA95439DCBA194F62E349142F403065C8A07A8484F5C8A3AC4` | `NotSigned` |
+| `target/release/bundle/nsis/popo_0.1.0_x64-setup.exe` | 199.94 MiB (209,649,076 bytes) | `A17F9B56E977D8F7EB2F91B83371D81FCF5FA2A2BAC19F47DAF5EFDF830B9D47` | `NotSigned` |
+
+Microsoft Defender was enabled with current signature `1.455.353.0` (age 0)
+and reported zero detections for the exact installer. A `.sha256` sidecar sits
+next to the ignored generated artifact. These facts make it a useful local
+proof/test build; the `NotSigned` result is still a mandatory upload blocker.
+
 The normal Tauri config continues using the smaller WebView2 download bootstrapper for local/direct development builds. Only `tauri:build:store` applies `offlineInstaller`.
 
 ## Partner Center package fields
