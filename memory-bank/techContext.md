@@ -207,7 +207,24 @@ copied and must remain available for Speech-to-Text and Vertex AI.
 
 ## Build / distribution
 
-- Windows installer: Tauri's MSI/NSIS bundler with WebView2 bootstrapper
-  (`webviewInstallMode: "downloadBootstrapper"`).
-- Target size: ≤12MB installer.
-- Auto-updates: Tauri updater against GitHub Releases (v1.0+).
+- Normal Tauri installer profile: NSIS/MSI uses WebView2
+  `downloadBootstrapper` for smaller local/direct builds.
+- Standalone NSIS profile: `pnpm --filter desktop tauri:build:store` overlays
+  `offlineInstaller`, emits `PoPo_<version>_x64-setup.exe`, and embeds the x64
+  WebView2 runtime. Partner Center EXE submission still requires trusted
+  Authenticode on the inner executable and installer.
+- Partner Center MSIX: `pnpm --filter desktop tauri:build:msix` invokes
+  `scripts/build-msix.ps1` and Windows SDK MakeAppx. It requires the exact
+  case-sensitive Product identity Name, Publisher, and PublisherDisplayName in
+  ignored `partner-center-identity.local.json`. Store MSIX may be unsigned;
+  Microsoft re-signs it only after certification.
+- Local unsigned MSIX: `tauri:build:msix:test` uses Microsoft's required
+  special-OID `PoPo.LocalTest` identity. It is installable only through the
+  Windows 11 `Add-AppxPackage -AllowUnsigned` test path and must never be
+  uploaded as the Store product.
+- MSIX is x64 packagedClassicApp/mediumIL with internet, microphone, and
+  runFullTrust declarations; it relies on the machine's WebView2 runtime.
+- User-facing Windows product casing is `PoPo`; stable Tauri ID
+  `ai.popo.desktop`, Rust binary `popo.exe`, and data paths remain unchanged.
+- Auto-updates: Tauri updater against GitHub Releases (v1.0+); Store update
+  behavior still requires packaged-build testing before release.

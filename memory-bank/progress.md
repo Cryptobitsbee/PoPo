@@ -129,6 +129,31 @@
 
 ## Pending / Polish
 
+## Session 64 — Installed OAuth, installer finish UI, and MSIX
+
+- [x] Classify Google's `client_secret is missing` as a Web-client build
+  mismatch and instruct the publisher to use a Desktop app OAuth client without
+  embedding a secret; raw unknown token descriptions are no longer shown.
+- [x] Browser callback now says authorization response received and makes token
+  exchange completion explicit.
+- [x] Windows product, title, publisher, Start Menu, tray, installer, and
+  uninstall display casing is `PoPo`; stable internal identifiers remain.
+- [x] Blank checked NSIS finish row fixed as `Create a desktop shortcut`.
+- [x] Stale duplicate uninstall metadata key removed; hook now enriches Tauri's
+  actual PRODUCTNAME key.
+- [x] Manual MakeAppx MSIX pipeline implemented with exact identity validation,
+  exact-size assets, unpack verification, SHA-256 sidecar, and separate local
+  special-OID versus Partner Center modes.
+- [x] Local unsigned x64 proof builds and verifies as `PoPo.LocalTest`; it is
+  deliberately not an upload candidate.
+- [ ] Owner: create/select a Google OAuth **Desktop app** client, update ignored
+  `.env.local`, rebuild, and test sign-in with a disposable account.
+- [ ] Owner: reserve/open the Partner Center product and copy the exact
+  case-sensitive Name, Publisher, and PublisherDisplayName into the ignored
+  identity file; then build the unsigned Store MSIX.
+- [ ] Run WACK and full packaged-app behavior on disposable clean Windows 10/11
+  environments before private submission.
+
 ## Session 63 — GitHub identity and Partner Center proof build
 
 - [x] Origin and canonical tracked URLs migrated to

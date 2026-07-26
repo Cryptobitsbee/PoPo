@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:build:store": "tauri build --bundles nsis --config src-tauri/tauri.store.conf.json",
+    "tauri:build:msix": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/build-msix.ps1",
+    "tauri:build:msix:test": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/build-msix.ps1 -LocalUnsigned",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

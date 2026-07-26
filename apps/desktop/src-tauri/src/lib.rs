@@ -244,12 +244,12 @@ pub fn run() {
 
             // --- Tray icon ----------------------------------------------
             // Left-click opens main window. Menu: Open / Quit.
-            let open_item = MenuItem::with_id(app, "open", "Open popo", true, None::<&str>)?;
+            let open_item = MenuItem::with_id(app, "open", "Open PoPo", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::with_id("main-tray")
-                .tooltip("popo")
+                .tooltip("PoPo")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false)

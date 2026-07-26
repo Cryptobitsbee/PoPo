@@ -4,6 +4,47 @@
 
 ## Current phase
 
+**SESSION 64 — Installed OAuth diagnosis, PoPo installer polish, and MSIX packaging.**
+
+Completed:
+- Diagnosed the screenshot's `client_secret is missing` result: the build-time
+  value has valid client-ID syntax but is a Google **Web application** OAuth
+  client. PoPo's PKCE desktop flow correctly has no secret; token failures now
+  give safe actionable copy, and the loopback page no longer implies the
+  account is connected before token exchange.
+- Corrected Windows display casing to `PoPo` for product/title/publisher, Start
+  Menu, Installed Apps metadata, tray, installer output, and uninstall shortcut
+  while preserving `ai.popo.desktop`, `popo.exe`, and existing data paths.
+- Defined Tauri's missing NSIS `createDesktop` LangString. The second checked
+  finish control in the screenshot is now labeled `Create a desktop shortcut`.
+- Corrected the custom NSIS hook to enrich Tauri's actual PRODUCTNAME uninstall
+  key and remove the historical duplicate `ai.popo.desktop` metadata key.
+- Added `scripts/build-msix.ps1`, `tauri:build:msix`, and
+  `tauri:build:msix:test`. MakeAppx builds/unpacks/verifies x64 packaged-classic
+  PoPo with exact-size Store assets and SHA-256 sidecar.
+- Final local proofs: standalone `PoPo_0.1.0_x64-setup.exe` is 209,647,693
+  bytes, SHA-256 `D5F95DE3E9270866C6CFF2D2021505FA0434D3EA223B5C62284BB45EEE9418F3`;
+  special-OID `PoPo_1.0.0.0_x64_LocalTest.msix` is 4,021,083 bytes, SHA-256
+  `F7545EA5E0F0040E5C3AE66A70193B2700413EF0899374D9FE6C10DF88A5EEB4`.
+  Both are `NotSigned`; current Defender reported zero detections for both.
+- Reworked `docs/MICROSOFT_PARTNER_CENTER_TESTING.md`: Store MSIX may be
+  submitted unsigned and Microsoft re-signs it after certification; EXE still
+  requires owner signing. Exact Partner Center product identity remains
+  mandatory and case-sensitive.
+
+Owner inputs still required:
+- Replace `VITE_GOOGLE_DESKTOP_CLIENT_ID` with a real Google OAuth **Desktop
+  app** client ID and rebuild; application code cannot convert a Web client.
+- Copy exact Partner Center `Identity/Name`, `Identity/Publisher`, and
+  `PublisherDisplayName` into the ignored local identity file before creating
+  the upload candidate. The special-OID local proof cannot be uploaded.
+- Run packaged OAuth/hotkey/microphone/startup/uninstall and WACK tests on clean
+  disposable Windows 10/11 environments before submission.
+
+Next feature after the subscription renews: #5 audio recovery after crash.
+
+### Previous session context
+
 **SESSION 63 — Canonical GitHub migration and Microsoft Partner Center proof build.**
 
 Completed:

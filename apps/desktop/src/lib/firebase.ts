@@ -179,6 +179,44 @@ interface GoogleTokenResponse {
   error_description?: string;
 }
 
+/**
+ * Convert Google's token response into stable, actionable UI copy.
+ *
+ * A `client_secret is missing` response means the configured client ID was
+ * created as a Web application. Native desktop apps cannot keep a secret and
+ * must instead use a Desktop app OAuth client with PKCE. Never "fix" this by
+ * embedding the Web client's secret in Vite or the executable.
+ */
+export function describeGoogleTokenFailure(
+  status: number,
+  response: GoogleTokenResponse,
+): string {
+  const details = `${response.error ?? ""} ${response.error_description ?? ""}`
+    .trim()
+    .toLowerCase();
+
+  if (details.includes("client_secret") && details.includes("missing")) {
+    return (
+      "This PoPo build is configured with a Google Web application OAuth " +
+      "client. Replace VITE_GOOGLE_DESKTOP_CLIENT_ID with an OAuth client " +
+      "created as Desktop app, then rebuild. Do not add a client secret."
+    );
+  }
+
+  if (response.error === "invalid_grant") {
+    return "Google sign-in expired or was already used. Please try again.";
+  }
+
+  if (response.error === "invalid_client") {
+    return (
+      "Google rejected this build's Desktop OAuth client ID. Check the " +
+      "publisher OAuth configuration and rebuild PoPo."
+    );
+  }
+
+  return `Google sign-in could not finish (token exchange ${status}). Please try again.`;
+}
+
 async function signInWithSystemBrowser(): Promise<User> {
   if (!auth) throw new Error("Firebase not configured");
 
@@ -289,11 +327,7 @@ async function signInWithSystemBrowser(): Promise<User> {
     .json()
     .catch(() => ({}))) as GoogleTokenResponse;
   if (!tokenResponse.ok || tokens.error) {
-    throw new Error(
-      tokens.error_description ||
-        tokens.error ||
-        `Token exchange failed (${tokenResponse.status}).`,
-    );
+    throw new Error(describeGoogleTokenFailure(tokenResponse.status, tokens));
   }
   if (!tokens.id_token) {
     throw new Error("Token response had no id_token");
