@@ -95,7 +95,7 @@ base64             = "0.22"
 # tonic+rustls stack so we don't pull in OpenSSL as a second crypto
 # backend. No `default-features` so we skip cookies / gzip / brotli
 # that we don't need for a single JSON POST.
-reqwest            = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest            = { version = "0.13", default-features = false, features = ["json", "rustls-tls"] }
 miniz_oxide        = "0.8"
 
 [features]
