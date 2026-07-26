@@ -261,8 +261,7 @@ unsafe fn get_hicon_with_fallback(hwnd: HWND) -> Option<(HICON, bool)> {
         }
     };
 
-    let path_str = String::from_utf16_lossy(&exe_path[..exe_path.len().saturating_sub(1)]);
-    tracing::info!("icon: extracting from .exe path: {}", path_str);
+    tracing::info!("icon: extracting from resolved executable path");
 
     // 5a. Try ExtractIconExW first (simpler, no COM init needed)
     if let Some(h) = icon_via_extract_icon_ex(&exe_path) {
@@ -276,10 +275,7 @@ unsafe fn get_hicon_with_fallback(hwnd: HWND) -> Option<(HICON, bool)> {
         return Some((h, true));
     }
 
-    tracing::warn!(
-        "icon: both ExtractIconExW and SHGetFileInfoW failed for {}",
-        path_str
-    );
+    tracing::warn!("icon: both ExtractIconExW and SHGetFileInfoW failed");
     None
 }
 

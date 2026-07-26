@@ -304,7 +304,7 @@ pub struct PopoState {
     /// Chosen explicitly in Settings; resolved once per dictation in
     /// `on_release` — never auto-detected on the hot path.
     pub gemini_provider: Mutex<String>,
-    /// Vertex AI region (e.g. "us-central1"). Only consulted when
+    /// Vertex AI location (`global`, `us`, or `eu`). Only consulted when
     /// `gemini_provider == "vertex"`. Vertex reuses the GCP service
     /// account already in `gcp` for its OAuth token + project id.
     pub vertex_location: Mutex<String>,
@@ -426,7 +426,7 @@ impl Default for PopoState {
             switcher_caller_hwnd: Mutex::new(None),
             gemini_api_key: Mutex::new(None),
             gemini_provider: Mutex::new("aistudio".to_string()),
-            vertex_location: Mutex::new("us-central1".to_string()),
+            vertex_location: Mutex::new("global".to_string()),
         }
     }
 }
@@ -611,7 +611,8 @@ pub fn on_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
             (RecordingMode::PushToTalk, ShortcutState::Pressed) => {
                 if let Err(e) = on_press(&app, forced_mode_id).await {
                     tracing::error!("hotkey press handler failed: {e:?}");
-                    let _ = app.emit(
+                    let _ = app.emit_to(
+                        "pill",
                         "pill:state:error",
                         ErrorPayload::error("press_failed", format!("{e}")),
                     );
@@ -620,7 +621,8 @@ pub fn on_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
             (RecordingMode::PushToTalk, ShortcutState::Released) => {
                 if let Err(e) = on_release(&app).await {
                     tracing::error!("hotkey release handler failed: {e:?}");
-                    let _ = app.emit(
+                    let _ = app.emit_to(
+                        "pill",
                         "pill:state:error",
                         ErrorPayload::error("release_failed", format!("{e}")),
                     );
@@ -640,14 +642,16 @@ pub fn on_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
                 if is_recording {
                     if let Err(e) = on_release(&app).await {
                         tracing::error!("toggle stop handler failed: {e:?}");
-                        let _ = app.emit(
+                        let _ = app.emit_to(
+                            "pill",
                             "pill:state:error",
                             ErrorPayload::error("release_failed", format!("{e}")),
                         );
                     }
                 } else if let Err(e) = on_press(&app, forced_mode_id).await {
                     tracing::error!("toggle start handler failed: {e:?}");
-                    let _ = app.emit(
+                    let _ = app.emit_to(
+                        "pill",
                         "pill:state:error",
                         ErrorPayload::error("press_failed", format!("{e}")),
                     );
@@ -808,7 +812,7 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
         let icon = focus::app_icon::get_app_icon_base64(hwnd);
         if !icon.is_empty() {
             tracing::info!("app icon extracted: {} bytes base64", icon.len());
-            let _ = app.emit("pill:app-icon", icon.clone());
+            let _ = app.emit_to("pill", "pill:app-icon", icon.clone());
             app_icon_b64 = Some(icon);
         } else {
             tracing::warn!("app icon: extraction returned empty for hwnd {hwnd}");
@@ -846,7 +850,7 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
     spawn_waveform_task(app.clone(), running.clone(), samples.clone(), sample_rate);
 
     // 4. Tell the pill we're ready.
-    let _ = app.emit("pill:state:ready", ());
+    let _ = app.emit_to("pill", "pill:state:ready", ());
 
     // Sound: soft ping on record-start when soundEffects is on.
     //
@@ -860,22 +864,22 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
         .lock()
         .map(|g| *g)
         .unwrap_or(true);
-    // Peek resolution to find the mode that'll be used (either forced
-    // or best app match / default). The final value is captured later
-    // when we store the session; this pass is for the immediate ping.
+    // Resolve through the same master-gated path used for the prompt.
+    // When Auto-format is off this returns no mode, so per-mode sound
+    // presets cannot leak through a disabled mode either.
     let press_mode_for_ping: Option<String> = {
-        if let Some(id) = forced_mode_id.as_deref() {
-            Some(id.to_string())
-        } else {
-            let (_prompt, matched) =
-                resolve_effective_prompt(state.inner(), app_name.as_deref(), None);
-            matched.map(|(id, _)| id)
-        }
+        let (_prompt, matched) = resolve_effective_prompt(
+            state.inner(),
+            app_name.as_deref(),
+            forced_mode_id.as_deref(),
+        );
+        matched.map(|(id, _)| id)
     };
     if sound_on {
         let preset = resolve_sound_preset(state.inner(), press_mode_for_ping.as_deref());
         // Payload: { kind: "start", preset: "default"|"soft"|... }.
-        let _ = app.emit(
+        let _ = app.emit_to(
+            "pill",
             "pill:sound",
             serde_json::json!({ "kind": "start", "preset": preset }),
         );
@@ -1185,11 +1189,68 @@ fn resolve_recognition_features(
 /// uniformly across all modes. Only when auto-format is OFF do we
 /// return empty — that path produces truly raw Chirp output for
 /// users who want unmodified text.
+#[cfg(test)]
+mod prompt_resolution_tests {
+    use super::*;
+
+    fn forced_binding() -> ModeBinding {
+        ModeBinding {
+            id: "mode-test".into(),
+            name: "Test mode".into(),
+            system_prompt: "Rewrite as a concise note.".into(),
+            apps: Vec::new(),
+            is_default: false,
+            hotkey: "Ctrl+Shift+T".into(),
+            sound_preset: "default".into(),
+        }
+    }
+
+    #[test]
+    fn forced_mode_cannot_bypass_disabled_auto_format() {
+        let state = PopoState::default();
+        state.mode_bindings.lock().unwrap().push(forced_binding());
+
+        let (prompt, matched) =
+            resolve_effective_prompt(&state, Some("Notepad"), Some("mode-test"));
+
+        assert!(prompt.is_empty());
+        assert!(matched.is_none());
+    }
+
+    #[test]
+    fn forced_mode_still_applies_when_auto_format_is_enabled() {
+        let state = PopoState::default();
+        *state.auto_format_enabled.lock().unwrap() = true;
+        state.mode_bindings.lock().unwrap().push(forced_binding());
+
+        let (prompt, matched) =
+            resolve_effective_prompt(&state, Some("Notepad"), Some("mode-test"));
+
+        assert!(prompt.starts_with(BASELINE_CORRECTION));
+        assert!(prompt.ends_with("Rewrite as a concise note."));
+        assert_eq!(matched, Some(("mode-test".into(), "Test mode".into())));
+    }
+}
+
 fn resolve_effective_prompt(
     state: &PopoState,
     app_name: Option<&str>,
     forced_mode_id: Option<&str>,
 ) -> (String, Option<(String, String)>) {
+    // Auto-format is a strict master switch. No default, app-bound,
+    // switcher-selected, or per-mode-hotkey prompt may bypass it.
+    let auto_format_on = state
+        .auto_format_enabled
+        .lock()
+        .map(|g| *g)
+        .unwrap_or(false);
+    if !auto_format_on {
+        if forced_mode_id.is_some() {
+            tracing::info!("mode resolution: forced mode ignored because Auto-format is off");
+        }
+        return (String::new(), None);
+    }
+
     // Snapshot bindings once so we drop the lock quickly.
     let bindings: Vec<ModeBinding> = state
         .mode_bindings
@@ -1197,10 +1258,9 @@ fn resolve_effective_prompt(
         .map(|g| g.clone())
         .unwrap_or_default();
 
-    // Priority 1: explicit forced mode from a per-mode hotkey.
-    // Overrides the auto_format_enabled master switch — the user
-    // explicitly asked for this mode by pressing its hotkey, so
-    // they clearly want formatting applied.
+    // Priority 1: explicit forced mode from a per-mode hotkey. This
+    // wins over app/default selection, but only after the master
+    // Auto-format gate above has allowed mode processing.
     if let Some(fid) = forced_mode_id {
         if let Some(m) = bindings.iter().find(|b| b.id == fid) {
             tracing::info!(
@@ -1216,15 +1276,6 @@ fn resolve_effective_prompt(
         tracing::warn!(
             "mode resolution: forced_mode_id {fid:?} didn't match any binding; falling through"
         );
-    }
-
-    let auto_format_on = state
-        .auto_format_enabled
-        .lock()
-        .map(|g| *g)
-        .unwrap_or(false);
-    if !auto_format_on {
-        return (String::new(), None);
     }
 
     // Priority 2: app-specific match.
@@ -1439,12 +1490,13 @@ async fn on_cancel(app: &AppHandle) -> anyhow::Result<()> {
     tracing::info!("recording cancelled via ESC");
 
     // Visual feedback: info-severity tooltip "Cancelled", brief hold.
-    let _ = app.emit(
+    let _ = app.emit_to(
+        "pill",
         "pill:state:error",
         ErrorPayload::info("cancelled", "Cancelled"),
     );
     tokio::time::sleep(Duration::from_millis(700)).await;
-    let _ = app.emit("pill:state:sleep", ());
+    let _ = app.emit_to("pill", "pill:state:sleep", ());
     Ok(())
 }
 
@@ -1901,7 +1953,7 @@ fn spawn_waveform_task(
             // Flip to active state on first voiced frame.
             if !voice_detected && voiced {
                 voice_detected = true;
-                let _ = app.emit("pill:state:active", ());
+                let _ = app.emit_to("pill", "pill:state:active", ());
             }
 
             // Refresh the silence countdown anchor every voiced frame.
@@ -1909,7 +1961,7 @@ fn spawn_waveform_task(
                 last_voice_at = std::time::Instant::now();
             }
 
-            let _ = app.emit("pill:waveform", WaveformPayload { bars });
+            let _ = app.emit_to("pill", "pill:waveform", WaveformPayload { bars });
 
             // Auto-stop: only after voice was first detected, only in
             // Toggle mode, only if silence_detection_seconds > 0.
@@ -2111,9 +2163,13 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                 capture_device_name, peak_post, peak_pre
             )
         };
-        let _ = app.emit("pill:state:error", ErrorPayload::info("no_speech", &reason));
+        let _ = app.emit_to(
+            "pill",
+            "pill:state:error",
+            ErrorPayload::info("no_speech", &reason),
+        );
         tokio::time::sleep(Duration::from_millis(900)).await;
-        let _ = app.emit("pill:state:sleep", ());
+        let _ = app.emit_to("pill", "pill:state:sleep", ());
         return Ok(());
     }
 
@@ -2167,7 +2223,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     };
 
     // Pill: processing
-    let _ = app.emit("pill:state:processing", ());
+    let _ = app.emit_to("pill", "pill:state:processing", ());
 
     // ── Transcribe ───────────────────────────────────────────────────────
     //
@@ -2235,7 +2291,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             }
             Err(e) => {
                 let full = format_error_chain(&e);
-                tracing::error!("streaming finish failed: {full}");
+                tracing::error!("streaming finish failed; attempting batch fallback");
                 // Fall back to batch transcribe as a last resort.
                 //
                 // If the streaming failure mentions "not found" AND we had
@@ -2319,25 +2375,27 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                                         Err(e3) => {
                                             let full3 = format_error_chain(&e3);
                                             tracing::error!(
-                                                "batch fallback (no prompt) also failed: {full3}"
+                                                "batch fallback without prompt also failed"
                                             );
-                                            let _ = app.emit(
+                                            let _ = app.emit_to(
+                                                "pill",
                                                 "pill:state:error",
                                                 ErrorPayload::error("transcribe_failed", full3),
                                             );
                                             tokio::time::sleep(Duration::from_millis(2000)).await;
-                                            let _ = app.emit("pill:state:sleep", ());
+                                            let _ = app.emit_to("pill", "pill:state:sleep", ());
                                             return Ok(());
                                         }
                                     }
                                 } else {
-                                    tracing::error!("batch fallback also failed: {full2}");
-                                    let _ = app.emit(
+                                    tracing::error!("batch fallback also failed");
+                                    let _ = app.emit_to(
+                                        "pill",
                                         "pill:state:error",
                                         ErrorPayload::error("transcribe_failed", full2),
                                     );
                                     tokio::time::sleep(Duration::from_millis(2000)).await;
-                                    let _ = app.emit("pill:state:sleep", ());
+                                    let _ = app.emit_to("pill", "pill:state:sleep", ());
                                     return Ok(());
                                 }
                             }
@@ -2346,12 +2404,13 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                     None => {
                         // GCP config vanished between press and release — shouldn't
                         // happen, but surface the streaming error.
-                        let _ = app.emit(
+                        let _ = app.emit_to(
+                            "pill",
                             "pill:state:error",
                             ErrorPayload::error("transcribe_failed", full),
                         );
                         tokio::time::sleep(Duration::from_millis(2000)).await;
-                        let _ = app.emit("pill:state:sleep", ());
+                        let _ = app.emit_to("pill", "pill:state:sleep", ());
                         return Ok(());
                     }
                 }
@@ -2428,14 +2487,15 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                                 Err(e_noadapt) => {
                                     let full_noadapt = format_error_chain(&e_noadapt);
                                     tracing::error!(
-                                        "batch (no adaptation) also failed: {full_noadapt}"
+                                        "batch fallback without adaptation also failed"
                                     );
-                                    let _ = app.emit(
+                                    let _ = app.emit_to(
+                                        "pill",
                                         "pill:state:error",
                                         ErrorPayload::error("transcribe_failed", full_noadapt),
                                     );
                                     tokio::time::sleep(Duration::from_millis(2000)).await;
-                                    let _ = app.emit("pill:state:sleep", ());
+                                    let _ = app.emit_to("pill", "pill:state:sleep", ());
                                     return Ok(());
                                 }
                             }
@@ -2461,24 +2521,26 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                                 Ok(t) => (t, false),
                                 Err(e2) => {
                                     let full2 = format_error_chain(&e2);
-                                    tracing::error!("batch (no prompt) also failed: {full2}");
-                                    let _ = app.emit(
+                                    tracing::error!("batch fallback without prompt also failed");
+                                    let _ = app.emit_to(
+                                        "pill",
                                         "pill:state:error",
                                         ErrorPayload::error("transcribe_failed", full2),
                                     );
                                     tokio::time::sleep(Duration::from_millis(2000)).await;
-                                    let _ = app.emit("pill:state:sleep", ());
+                                    let _ = app.emit_to("pill", "pill:state:sleep", ());
                                     return Ok(());
                                 }
                             }
                         } else {
-                            tracing::error!("GCP transcribe failed: {full}");
-                            let _ = app.emit(
+                            tracing::error!("GCP transcription failed");
+                            let _ = app.emit_to(
+                                "pill",
                                 "pill:state:error",
                                 ErrorPayload::error("transcribe_failed", full),
                             );
                             tokio::time::sleep(Duration::from_millis(2000)).await;
-                            let _ = app.emit("pill:state:sleep", ());
+                            let _ = app.emit_to("pill", "pill:state:sleep", ());
                             return Ok(());
                         }
                     }
@@ -2519,16 +2581,14 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
         // Require at least 12 chars to avoid false positives on short
         // real transcripts like "ok" or "hello there".
         if t_head.chars().count() >= 12 && p_norm.contains(&t_head) {
-            tracing::warn!(
-                "prompt-echo detected: transcript head {:?} found in custom_prompt — discarding",
-                t_head
-            );
-            let _ = app.emit(
+            tracing::warn!("prompt-echo detected; discarding transcript");
+            let _ = app.emit_to(
+                "pill",
                 "pill:state:error",
                 ErrorPayload::info("no_speech", "No speech detected"),
             );
             tokio::time::sleep(Duration::from_millis(900)).await;
-            let _ = app.emit("pill:state:sleep", ());
+            let _ = app.emit_to("pill", "pill:state:sleep", ());
             return Ok(());
         }
     }
@@ -2605,23 +2665,21 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                 .vertex_location
                 .lock()
                 .map(|g| g.clone())
-                .unwrap_or_else(|_| "us-central1".to_string());
+                .unwrap_or_else(|_| "global".to_string());
             match gcp_snap {
-                Some((config, auth)) if config.is_configured() => {
-                    match auth.access_token().await {
-                        Ok(token) => Some(OwnedCreds::Vertex {
-                            token,
-                            project: config.project_id.clone(),
-                            location,
-                        }),
-                        Err(e) => {
-                            tracing::warn!(
-                                "gemini(vertex): could not mint OAuth token ({e:#}); pasting raw"
-                            );
-                            None
-                        }
+                Some((config, auth)) if config.is_configured() => match auth.access_token().await {
+                    Ok(token) => Some(OwnedCreds::Vertex {
+                        token,
+                        project: config.project_id.clone(),
+                        location,
+                    }),
+                    Err(e) => {
+                        tracing::warn!(
+                            "gemini(vertex): could not mint OAuth token ({e:#}); pasting raw"
+                        );
+                        None
                     }
-                }
+                },
                 _ => {
                     tracing::warn!(
                         "gemini(vertex): GCP service account not configured; pasting raw"
@@ -2672,10 +2730,8 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                     tracing::info!("gemini: smart-cleanup applied");
                     polished
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "gemini: smart-cleanup failed ({e:#}); pasting Chirp output raw"
-                    );
+                Err(_) => {
+                    tracing::warn!("gemini: smart-cleanup failed; pasting Chirp output raw");
                     transcript
                 }
             }
@@ -2717,7 +2773,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             );
             // Notify the frontend so it can bump usageCount on the
             // matched snippets. Non-blocking.
-            let _ = app.emit("snippets:expanded", &expansion.matched_ids);
+            let _ = app.emit_to("main", "snippets:expanded", &expansion.matched_ids);
         }
         expansion_instances = expansion.instances;
         expansion.text
@@ -2771,7 +2827,8 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                     app.state::<PopoState>().inner(),
                     matched_mode_id.as_deref(),
                 );
-                let _ = app.emit(
+                let _ = app.emit_to(
+                    "pill",
                     "pill:sound",
                     serde_json::json!({ "kind": "paste", "preset": preset }),
                 );
@@ -2826,7 +2883,8 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                 }
             };
 
-            let _ = app.emit(
+            let _ = app.emit_to(
+                "main",
                 "session:created",
                 SessionPayload {
                     id: session_id,
@@ -2848,13 +2906,14 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             );
 
             // Pill: success flash (brief §2: 300ms hold).
-            let _ = app.emit("pill:state:success", ());
+            let _ = app.emit_to("pill", "pill:state:success", ());
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
         focus::paste::PasteOutcome::Failed { reason } => {
             tracing::warn!("paste failed, transcript stays on clipboard: {reason}");
             // Pill: error state (brief §2: 2s hold, border --accent-error).
-            let _ = app.emit(
+            let _ = app.emit_to(
+                "pill",
                 "pill:state:error",
                 ErrorPayload::error(
                     "paste_failed",
@@ -2866,7 +2925,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     }
 
     // Pill: back to ambient sleep.
-    let _ = app.emit("pill:state:sleep", ());
+    let _ = app.emit_to("pill", "pill:state:sleep", ());
 
     // If we just ran the fake-transcribe path because GCP isn't
     // configured, surface a soft hint above the pill so the user
@@ -2875,7 +2934,8 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     // with a 10s persistent reminder. severity="info" means the
     // pill keeps its sleep state + no Windows toast fires.
     if used_fake {
-        let _ = app.emit(
+        let _ = app.emit_to(
+            "pill",
             "pill:state:error",
             ErrorPayload::info("gcp_not_configured", gcp::GCP_SETUP_HINT),
         );

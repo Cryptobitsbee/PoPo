@@ -9,6 +9,7 @@ pub mod audio;
 pub mod export;
 pub mod gcp;
 pub mod oauth;
+pub mod secrets;
 pub mod settings;
 pub mod switcher;
 pub mod system;

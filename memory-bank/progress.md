@@ -17,7 +17,7 @@
 - [x] [6] Rust core — COMPLETE + RUNTIME-VERIFIED
   - cpal audio capture with per-channel downmix to mono, 45s ring buffer
   - Box-average resample 48kHz→16kHz
-  - Google Chirp 3 gRPC to `us-speech.googleapis.com` with rustls TLS
+  - Google Chirp 3 gRPC to `eu-speech.googleapis.com` with rustls TLS
   - Voice-activity detection, session:created event, cmd_update_language
   - OAuth loopback listener, GCP channel once_cell cache + prewarm
 - [x] [7] Paste mechanic — enigo Ctrl+V primary + WM_PASTE fallback
@@ -71,9 +71,10 @@
     Firebase Console ghost-doc rendering issue
   - Storage rules deployed to `popo-flow.firebasestorage.app`
 - [x] Firebase Storage — cloud audio backup
-  - `useAudioUpload` hook: reads WAV via `cmd_read_audio_bytes`,
-    uploads to `audio/{uid}/{id}.wav`, stores `audioDownloadUrl` in
-    Firestore session doc, patches historyStore immediately
+  - `useAudioUpload` hook: reads WAV via constrained `cmd_read_audio_bytes`,
+    uploads to `audio/{uid}/{id}.wav`, stores only `audioCloudPath` in
+    Firestore, and resolves authenticated download URLs on demand
+    (legacy `audioDownloadUrl` remains playback-compatible)
   - StorageRules deployed (user-owns-own audio)
 - [x] Sync log viewer (AccountPage) — real-time Firestore op visibility
   - `syncLogStore` + `SyncLogViewer` + `FirestoreTestButton`
@@ -113,11 +114,12 @@
 
 ## Phase 5 — Hardening & Ship
 
-- [~] [16] Paste mechanic full test suite — matrix documented in
-  `docs/PASTE_TEST_RESULTS.md` (Session 26). 30-row results table +
-  test procedure. Rows currently all `❓` pending live runs on the
-  latest NSIS build; whoever has a Windows machine should work
-  through the matrix and flip rows to `✅` / `⚠️` / `❌`.
+- [x] [16] Paste mechanic full test suite — user runtime-confirmed on
+  2026-07-26 across the application matrix and multiple devices.
+  Custom per-app paste-key overrides cover apps that need a non-default
+  shortcut. `docs/PASTE_TEST_RESULTS.md` records passing application rows,
+  with UAC/DirectX retained as expected OS failures and full-screen RDP as
+  environment-dependent.
 - [x] [17] README.md — comprehensive user-facing doc written Session
   26: what popo is, install/setup walkthrough, GCP wizard steps,
   first dictation, hotkey reference, pill states table, settings
@@ -126,6 +128,87 @@
   project layout, contributing rules.
 
 ## Pending / Polish
+
+## Session 61 — Security and release-readiness hardening
+
+- [x] Desktop OAuth now uses system browser + PKCE S256 + random state +
+  hardened random-port loopback; no embedded client secret.
+- [x] Custom Tauri IPC centrally origin-gated; capabilities split by webview;
+  sensitive events route only to main/pill targets; CSP enabled.
+- [x] Gemini key migrated from localStorage to Windows current-user DPAPI;
+  service-account JSON remains external and is never copied/deleted.
+- [x] Audio reads/deletes and export writes constrained to trusted boundaries.
+- [x] New cloud audio stores owner-scoped object paths, not bearer URLs;
+  complete per-session/account cloud+local deletion implemented.
+- [x] Firebase Analytics removed; source-build config isolated/documented;
+  Firestore/Storage Rules owner/schema/path/size bounded and default-deny.
+- [x] Vulnerable npm/Rust packages updated or pruned; automated OSV, RustSec,
+  CodeQL, dependency review, Gitleaks, CI, and Dependabot configured.
+- [x] Privacy/security/open-source/signing/SmartScreen/malware guidance written.
+- [x] Automated validation: frozen install, 20 Rust tests, Rust release
+  check/format, frontend typecheck/build, Tauri config, Firestore/Storage rule
+  compilation, zero applicable OSV/RustSec vulnerabilities, clean repository
+  secret scan/diff, clean Tauri dev startup, canonical Geist font reproduction,
+  successful unsigned NSIS build, and two independent reviews with no blocking
+  findings. The generated installer was explicitly verified `NotSigned`; its
+  local SHA-256 was `9C6AF98BE88F35DB72E46ED88AD708B595557D71FDA570B49E28B995C89FB564`.
+- [ ] Owner release gates: select OSI license; add publisher legal/privacy
+  contact; deploy/test production rules; disposable-account OAuth/deletion and
+  full feature smoke; obtain Store/Artifact Signing identity; sign/timestamp,
+  Defender-scan, hash, and verify exact release artifacts.
+
+## Session 60 — Compact Quick Switcher and backlog reconciliation
+
+- [x] User runtime-confirmed both repaired cloud paths: Chirp 3 STT and Gemini
+  AI now work.
+- [x] Redesigned only the `Ctrl+Shift+M` Quick Switcher into a 360×300 compact
+  mode selector; the main Modes page was not changed.
+- [x] Reduced the UI to search, mode names, active check, optional hotkeys, and
+  one-line keyboard help. Removed prompt previews, app-icon stacks, verbose
+  prose, and the prohibited selection side stripe.
+- [x] Preserved keyboard/mouse behavior, focus restoration, settings/modes
+  cross-webview synchronization, sticky mode updates, and direct Rust IPC.
+- [x] Preserved strict Auto-format-off behavior: no visual active mode, no mode
+  selection, and no binding/prompt IPC; the saved default remains dormant.
+- [x] Frontend typecheck and production build passed (5069 modules), and
+  `git diff --check` passed.
+- [x] Audited `progress.md`, `activeContext.md`, `docs/ROADMAP.md`,
+  `POPO_BRIEF.md`, the paste matrix, source TODO/FIXME markers, and git status.
+- [ ] Next batch: current-release closeout (runtime switcher visual/interaction
+  smoke, stale-doc reconciliation, dead pending-switcher Rust cleanup, fresh
+  release installer build and smoke test).
+- [ ] Then complete continuously: #18 mic errors → #5 crash recovery → #10
+  vocabulary + #17 usage telemetry + #15 stats → #2 voice commands → #1
+  transforms → #3 context-aware dictation + #6 continue thought → production
+  updater/signing/Windows validation and later offline fallback.
+
+## Session 59 — Runtime locale, Vertex location, and disabled-mode UX
+
+- [x] Diagnosed Chirp `locale auto` rejection as preview `asia-south1`
+  endpoint availability, not service-account IAM.
+- [x] Moved Speech v2/Chirp 3 to documented GA `eu` multi-region while
+  retaining Google's official `language_codes=["auto"]` behavior.
+- [x] Diagnosed Vertex HTTP 404 as unsupported `us-central1` routing for
+  Gemini 3.5 Flash-Lite.
+- [x] Vertex now offers only `global`, `us`, and `eu`, defaults to `global`,
+  and normalizes legacy single-region values at frontend hydration, Rust IPC,
+  and final URL construction.
+- [x] Quick Switcher shows no active/default marker and accepts no mode picks
+  while Auto-format is off; the prior saved default remains available when
+  the master switch is re-enabled.
+- [x] Rust tests (6), cargo check, frontend typecheck/build, formatting, and
+  diff hygiene all pass.
+
+## Session 58 — Provider/mode, credentials, model, uninstall reliability
+
+- [x] Vertex/AI Studio provider routing audited; all Gemini paths honor the selected provider.
+- [x] Auto-format made a strict master gate for default/app/forced modes and mode sounds.
+- [x] Modes page, Quick Switcher, and Settings now explain the Auto-format dependency.
+- [x] GCP token access fails closed when the selected source JSON is missing.
+- [x] Gemini upgraded to stable GA `gemini-3.5-flash-lite` on both providers with 3.5-compatible payload fields.
+- [x] Debug builds can no longer register autostart; in-app and NSIS uninstall paths remove Run values.
+- [x] Paste matrix populated from user-confirmed multi-device testing.
+- [x] Rust tests/check/format, frontend typecheck/build, and release NSIS bundle all pass.
 
 ## Sessions 39–56 — Mega sprint (this chat)
 

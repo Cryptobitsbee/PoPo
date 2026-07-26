@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "../store/settingsStore";
 import { useModesStore } from "../store/modesStore";
@@ -49,6 +49,8 @@ import { useDictionaryStore } from "../store/dictionaryStore";
  * component originally invoked the setting (see SettingsPage).
  */
 export function useApplySettingsToRust() {
+  const updateGcp = useSettingsStore((s) => s.updateGcp);
+  const [geminiSecretReady, setGeminiSecretReady] = useState(false);
   const hotkey = useSettingsStore((s) => s.settings.hotkey);
   const micDeviceId = useSettingsStore((s) => s.settings.micDeviceId);
   const recordingMode = useSettingsStore((s) => s.settings.recordingMode);
@@ -156,6 +158,43 @@ export function useApplySettingsToRust() {
   // Firestore). Gating happens in Rust on `auto_format_enabled +
   // key_present` — there's no separate smartCleanup toggle anymore.
   const geminiApiKey = useSettingsStore((s) => s.gcp.geminiApiKey);
+
+  // One-time secret hydration. A key left by an older build exists only in
+  // this store's initial in-memory state (settingsStore immediately strips it
+  // from localStorage); persist it with DPAPI before enabling normal pushes.
+  useEffect(() => {
+    if (!isTauriContext()) {
+      setGeminiSecretReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const legacyKey = useSettingsStore.getState().gcp.geminiApiKey;
+        let protectedKey = legacyKey;
+        if (legacyKey) {
+          await invoke("cmd_set_gemini_api_key", { key: legacyKey });
+        } else {
+          protectedKey = await invoke<string | null>("cmd_get_gemini_api_key");
+        }
+        if (!cancelled) {
+          updateGcp({ geminiApiKey: protectedKey });
+          setGeminiSecretReady(true);
+        }
+      } catch (error) {
+        // Keep normal key writes disabled: sending the initial null value
+        // after a failed read could erase a valid encrypted key.
+        // eslint-disable-next-line no-console
+        console.warn("[popo] Gemini key hydration failed:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [updateGcp]);
+
   // Gemini provider + Vertex region (machine-local on GCPSettings).
   // Provider is chosen explicitly in Settings; pushed to Rust so the
   // dictation path reads it directly (no per-paste auto-detect).
@@ -249,9 +288,13 @@ export function useApplySettingsToRust() {
   );
 
   // Gemini API key (Session 34, simplified Session 35).
-  useDebouncedInvoke("cmd_set_gemini_api_key", { key: geminiApiKey ?? null }, [
-    geminiApiKey ?? "",
-  ]);
+  useDebouncedInvoke(
+    "cmd_set_gemini_api_key",
+    { key: geminiApiKey ?? null },
+    [geminiApiKey ?? "", geminiSecretReady],
+    300,
+    geminiSecretReady,
+  );
 
   // Gemini provider + Vertex region. Pushed together so a provider
   // switch and a region edit both land. Defaults applied defensively.
@@ -259,9 +302,9 @@ export function useApplySettingsToRust() {
     "cmd_set_gemini_provider",
     {
       provider: geminiProvider ?? "aistudio",
-      location: vertexLocation ?? "us-central1",
+      location: vertexLocation ?? "global",
     },
-    [geminiProvider ?? "aistudio", vertexLocation ?? "us-central1"],
+    [geminiProvider ?? "aistudio", vertexLocation ?? "global"],
   );
 }
 
@@ -274,10 +317,11 @@ function useDebouncedInvoke(
   args: Record<string, unknown>,
   deps: ReadonlyArray<unknown>,
   delay = 300,
+  enabled = true,
 ) {
   const timer = useRef<number | null>(null);
   useEffect(() => {
-    if (!isTauriContext()) return;
+    if (!enabled || !isTauriContext()) return;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       invoke(command, args).catch((e) => {

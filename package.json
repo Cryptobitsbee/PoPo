@@ -2,7 +2,7 @@
   "name": "popo",
   "private": true,
   "version": "0.1.0",
-  "description": "popo — Windows system-level AI voice dictation",
+  "description": "PoPo — Windows system-level AI voice dictation",
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "dev": "pnpm --filter desktop tauri dev",
@@ -11,47 +11,32 @@
     "build:landing": "pnpm --filter landing build",
     "tauri": "pnpm --filter desktop tauri",
     "typecheck": "pnpm -r --parallel typecheck",
-    "eslint": "eslint \"**/*.{js,cjs,ts,mjs,jsx,tsx}\"",
-    "lint": "npm run eslint",
-    "lintfix": "npm run eslint -- --fix",
-    "postlint": "template-oss-check",
-    "template-oss-apply": "template-oss-apply --force",
-    "snap": "tap",
-    "test": "tap",
-    "posttest": "npm run lint"
+    "security:audit:npm": "node scripts/audit-osv.mjs"
   },
   "engines": {
     "node": ">=20",
     "pnpm": ">=9"
   },
   "devDependencies": {
-    "sharp": "^0.34.5"
+    "sharp": "0.35.0"
   },
   "pnpm": {
     "overrides": {
-      "next": ">=15.3.2",
-      "undici": ">=6.21.1",
-      "postcss": ">=8.5.1",
-      "protobufjs": ">=7.4.0"
+      "undici": "8.5.0",
+      "postcss": "8.5.18",
+      "protobufjs": "8.6.6",
+      "websocket-driver": "0.7.5",
+      "@grpc/grpc-js": "1.9.16"
+    },
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "next"
+      ]
     }
   },
-  "author": "GitHub Inc.",
-  "files": [
-    "bin/",
-    "lib/"
-  ],
+  "author": "PoPo contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Ganesh540-crypto/PoPo.git"
-  },
-  "templateOSS": {
-    "//@npmcli/template-oss": "This file is partially managed by @npmcli/template-oss. Edits may be overwritten.",
-    "version": "4.29.0"
-  },
-  "tap": {
-    "nyc-arg": [
-      "--exclude",
-      "tap-snapshots/**"
-    ]
   }
 }

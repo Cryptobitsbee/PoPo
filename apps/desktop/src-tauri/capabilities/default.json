@@ -1,38 +1,26 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Default permissions for popo desktop windows.",
-  "windows": ["main", "pill", "switcher"],
+  "identifier": "main",
+  "description": "Least-privilege permissions for the main PoPo settings/history window.",
+  "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-is-maximized",
-    "core:window:allow-set-focus",
-    "core:window:allow-set-ignore-cursor-events",
-    "core:window:allow-set-position",
-    "core:window:allow-set-size",
     "core:window:allow-start-dragging",
     "core:event:allow-listen",
     "core:event:allow-emit",
     "core:app:allow-version",
     "core:app:allow-name",
-    "notification:default",
     "dialog:allow-open",
-    "opener:allow-open-path",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
-    },
-    "opener:allow-reveal-item-in-dir",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled",
-    "fs:default"
+      "allow": [
+        { "url": "https://console.cloud.google.com/**" },
+        { "url": "https://aistudio.google.com/app/apikey" },
+        { "url": "https://github.com/Ganesh540-crypto/PoPo/releases**" }
+      ]
+    }
   ]
 }

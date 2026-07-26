@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes } from "firebase/storage";
 import { doc, updateDoc } from "firebase/firestore";
 import type { Session } from "@popo/shared-types";
 import { storage, db, isFirebaseConfigured } from "../lib/firebase";
@@ -67,8 +67,11 @@ export function useAudioUpload() {
         const uint8 = new Uint8Array(bytes);
         const blob = new Blob([uint8], { type: "audio/wav" });
 
-        // Upload to Firebase Storage.
-        const audioRef = ref(storage, `audio/${uid}/${session.id}.wav`);
+        // Persist only the object path. Playback resolves an authenticated
+        // download URL on demand through the Firebase SDK instead of storing
+        // a long-lived bearer URL in Firestore.
+        const cloudPath = `audio/${uid}/${session.id}.wav`;
+        const audioRef = ref(storage, cloudPath);
         await uploadBytes(audioRef, blob, {
           contentType: "audio/wav",
           customMetadata: {
@@ -78,26 +81,19 @@ export function useAudioUpload() {
           },
         });
 
-        // Get a long-lived, publicly-readable download URL.
-        const downloadUrl = await getDownloadURL(audioRef);
-
-        // Persist the URL to the Firestore session doc so other
-        // devices can fetch and play this recording.
         const sessionRef = doc(db, "users", uid, "sessions", session.id);
-        await updateDoc(sessionRef, { audioDownloadUrl: downloadUrl });
+        await updateDoc(sessionRef, { audioCloudPath: cloudPath });
 
-        // Also patch the in-memory historyStore so the Play button
-        // activates immediately without a reload.
         const { sessions, setAll } = useHistoryStore.getState();
         setAll(
           sessions.map((s) =>
-            s.id === session.id ? { ...s, audioDownloadUrl: downloadUrl } : s,
+            s.id === session.id ? { ...s, audioCloudPath: cloudPath } : s,
           ),
         );
 
         // eslint-disable-next-line no-console
         console.info(
-          `[popo] audio uploaded (${(uint8.length / 1024).toFixed(0)} KB) → ${downloadUrl.slice(0, 80)}…`,
+          `[popo] audio uploaded (${(uint8.length / 1024).toFixed(0)} KB) → ${cloudPath}`,
         );
       } catch (e) {
         // eslint-disable-next-line no-console

@@ -1,14 +1,15 @@
 import { useMemo, useRef, useState } from "react";
 import type { Session, Mode } from "@popo/shared-types";
+import { invoke } from "@tauri-apps/api/core";
 import { useHistoryStore } from "../store/historyStore";
 import { useModesStore } from "../store/modesStore";
 import { useAppIconsStore } from "../store/appIconsStore";
 import { useAuthStore } from "../store/authStore";
-import { useSettingsStore } from "../store/settingsStore";
 import {
   deleteSession as firestoreDeleteSession,
   deleteAppIcon as firestoreDeleteAppIcon,
 } from "../lib/firestore";
+import { deleteCloudAudio } from "../lib/cloudDeletion";
 import { trackSync } from "../store/syncLogStore";
 import HistoryControls from "../components/history/HistoryControls";
 import HistoryList from "../components/history/HistoryList";
@@ -131,20 +132,34 @@ export default function HistoryPage() {
     // 1. Local delete — instant UI feedback.
     localDeleteSession(id);
 
-    // 2. Firestore delete. Without this, `useHistorySync` restores the
-    //    session from the remote snapshot the next time ANY sync
-    //    event fires (e.g. the user saves a new dictation) — which
-    //    is exactly the "deleted rows keep coming back" bug.
-    const privacyMode = useSettingsStore.getState().settings.privacyMode;
-    if (user?.uid && !privacyMode) {
+    // 2. Delete the local WAV through the path-constrained Rust command.
+    //    Missing files are treated as already deleted.
+    if (victim?.audioStoragePath) {
+      invoke("cmd_delete_audio_file", {
+        path: victim.audioStoragePath,
+      }).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.warn("[popo] local audio deletion failed:", error);
+      });
+    }
+
+    // 3. Delete the Firestore row and cloud WAV whenever signed in.
+    //    Current privacyMode must not protect data that was synced before
+    //    the user enabled privacy mode.
+    if (user?.uid) {
       trackSync("delete", `users/${user.uid}/sessions/${id}`, () =>
         firestoreDeleteSession(user.uid, id),
       ).catch(() => {
         /* trackSync already surfaces the error to the sync log. */
       });
+      trackSync("delete", `audio/${user.uid}/${id}.wav`, () =>
+        deleteCloudAudio(user.uid, id),
+      ).catch(() => {
+        /* Missing objects are idempotent; other errors stay in the log. */
+      });
     }
 
-    // 3. Orphan-icon cleanup. If no other session references the
+    // 4. Orphan-icon cleanup. If no other session references the
     //    victim's appName we remove the icon locally + from Firestore.
     //    This matches the user's mental model ("used an app once,
     //    deleted the only session, so the icon goes too") while

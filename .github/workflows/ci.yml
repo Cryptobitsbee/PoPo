@@ -1,106 +1,50 @@
-# This file is automatically added by @npmcli/template-oss. Do not edit.
-
 name: CI
 
 on:
   workflow_dispatch:
   pull_request:
   push:
-    branches:
-      - main
-  schedule:
-    # "At 09:00 UTC (02:00 PT) on Monday" https://crontab.guru/#0_9_*_*_1
-    - cron: "0 9 * * 1"
+    branches: [main]
 
 permissions:
   contents: read
 
-jobs:
-  lint:
-    name: Lint
-    if: github.repository_owner == 'npm'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Git User
-        run: |
-          git config --global user.email "npm-cli+bot@github.com"
-          git config --global user.name "npm CLI robot"
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        id: node
-        with:
-          node-version: 22.x
-          check-latest: contains('22.x', '.x')
-      - name: Install Latest npm
-        uses: ./.github/actions/install-latest-npm
-        with:
-          node: ${{ steps.node.outputs.node-version }}
-      - name: Install Dependencies
-        run: npm i --ignore-scripts --no-audit --no-fund
-      - name: Lint
-        run: npm run lint --ignore-scripts
-      - name: Post Lint
-        run: npm run postlint --ignore-scripts
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-  test:
-    name: Test - ${{ matrix.platform.name }} - ${{ matrix.node-version }}
-    if: github.repository_owner == 'npm'
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: Linux
-            os: ubuntu-latest
-            shell: bash
-          - name: macOS
-            os: macos-latest
-            shell: bash
-          - name: macOS
-            os: macos-15-intel
-            shell: bash
-          - name: Windows
-            os: windows-latest
-            shell: cmd
-        node-version:
-          - 20.0.0
-          - 20.x
-          - 22.x
-        exclude:
-          - platform: { name: macOS, os: macos-15-intel, shell: bash }
-            node-version: 20.0.0
-          - platform: { name: macOS, os: macos-15-intel, shell: bash }
-            node-version: 20.x
-          - platform: { name: macOS, os: macos-15-intel, shell: bash }
-            node-version: 22.x
-    runs-on: ${{ matrix.platform.os }}
-    defaults:
-      run:
-        shell: ${{ matrix.platform.shell }}
+jobs:
+  frontend:
+    name: Frontend build and Tauri config
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Git User
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter desktop typecheck
+      - run: pnpm --filter desktop build
+      - run: pnpm --filter desktop tauri info
+
+  rust-windows:
+    name: Rust tests and release check (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust with rustfmt
+        shell: pwsh
         run: |
-          git config --global user.email "npm-cli+bot@github.com"
-          git config --global user.name "npm CLI robot"
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        id: node
-        with:
-          node-version: ${{ matrix.node-version }}
-          check-latest: contains(matrix.node-version, '.x')
-      - name: Install Latest npm
-        uses: ./.github/actions/install-latest-npm
-        with:
-          node: ${{ steps.node.outputs.node-version }}
-      - name: Install Dependencies
-        run: npm i --ignore-scripts --no-audit --no-fund
-      - name: Add Problem Matcher
-        run: echo "::add-matcher::.github/matchers/tap.json"
-      - name: Test
-        run: npm test --ignore-scripts
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - name: Check formatting
+        run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+      - name: Run library tests
+        run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+      - name: Check release profile
+        run: cargo check --locked --release --manifest-path apps/desktop/src-tauri/Cargo.toml

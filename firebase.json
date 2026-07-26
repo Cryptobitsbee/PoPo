@@ -3,8 +3,21 @@
     "database": "popo-flow",
     "rules": "firestore.rules"
   },
-  "storage": {
-    "bucket": "popo-flow.firebasestorage.app",
-    "rules": "storage.rules"
+  "storage": [
+    {
+      "bucket": "popo-flow.firebasestorage.app",
+      "rules": "storage.rules"
+    }
+  ],
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "storage": {
+      "port": 9199
+    },
+    "ui": {
+      "enabled": false
+    }
   }
 }

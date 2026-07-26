@@ -168,7 +168,11 @@ pub async fn cmd_test_dictate_stop(
     );
 
     // Emit zero bars so the waveform resets visually.
-    let _ = app.emit("test:waveform", TestWaveformPayload { bars: [0.0; 16] });
+    let _ = app.emit_to(
+        "main",
+        "test:waveform",
+        TestWaveformPayload { bars: [0.0; 16] },
+    );
 
     // Transcribe with GCP Chirp (or fake_transcribe fallback).
     let gcp_snapshot: Option<(GcpConfig, Authenticator)> = {
@@ -267,7 +271,11 @@ pub async fn cmd_test_dictate_stop(
         Err(e) => (String::new(), Some(e)),
     };
 
-    let _ = app.emit("test:transcript", TestTranscriptPayload { text, error });
+    let _ = app.emit_to(
+        "main",
+        "test:transcript",
+        TestTranscriptPayload { text, error },
+    );
 
     tracing::info!("cmd_test_dictate_stop: transcript emitted");
     Ok(())
@@ -297,7 +305,11 @@ fn spawn_test_waveform_task(
             for i in 0..16 {
                 smoothed[i] = SMOOTH_ALPHA * raw[i] + (1.0 - SMOOTH_ALPHA) * smoothed[i];
             }
-            let _ = app.emit("test:waveform", TestWaveformPayload { bars: smoothed });
+            let _ = app.emit_to(
+                "main",
+                "test:waveform",
+                TestWaveformPayload { bars: smoothed },
+            );
         }
     });
 }

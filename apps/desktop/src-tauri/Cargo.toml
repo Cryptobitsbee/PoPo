@@ -17,10 +17,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "devtools"] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-notification    = "2"
-tauri-plugin-fs              = "2"
 tauri-plugin-dialog          = "2"
 tauri-plugin-opener          = "2"
 tauri-plugin-autostart       = "2"
@@ -75,6 +73,8 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
 ] }
 
 # WAV writer for the Privacy → Store audio setting. Writes raw PCM
@@ -90,7 +90,7 @@ uuid               = { version = "1", features = ["v4"] }
 once_cell          = "1"
 base64             = "0.22"
 
-# HTTP client for Gemini 3.1 Flash-Lite REST calls (post-Chirp
+# HTTP client for Gemini 3.5 Flash-Lite REST calls (post-Chirp
 # transcript polish). rustls-tls features match our existing
 # tonic+rustls stack so we don't pull in OpenSSL as a second crypto
 # backend. No `default-features` so we skip cookies / gzip / brotli

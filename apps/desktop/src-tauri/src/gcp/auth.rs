@@ -56,10 +56,27 @@ impl Authenticator {
         })
     }
 
+    /// Return whether the configured source is still a regular file.
+    /// The original path remains authoritative; popo never copies the
+    /// service-account key into app storage.
+    pub fn source_file_available(&self) -> bool {
+        source_file_available(&self.source_path)
+    }
+
     /// Mint (or return cached) OAuth2 access token for Speech-to-Text.
     ///
-    /// gcp_auth caches internally — typical call is a cheap hashmap lookup.
+    /// Even though `gcp_auth` keeps parsed key material and tokens in
+    /// memory, every use fails closed if the user-selected source JSON
+    /// has been moved or deleted. This prevents a long-running process
+    /// from silently continuing with credentials that no longer exist
+    /// at the configured path.
     pub async fn access_token(&self) -> Result<String> {
+        if !self.source_file_available() {
+            return Err(anyhow!(
+                "GCP service-account JSON is no longer available at the configured path. Reselect it in Settings → GCP Setup."
+            ));
+        }
+
         let token = self
             .provider
             .token(&[SCOPE])
@@ -70,14 +87,43 @@ impl Authenticator {
 
     /// The project_id embedded in the service-account JSON. Used as the
     /// parent resource in StreamingRecognize requests
-    /// (`projects/{project_id}/locations/global/recognizers/_`).
+    /// (`projects/{project_id}/locations/eu/recognizers/_`).
     pub fn project_id(&self) -> Option<String> {
         // gcp_auth's CustomServiceAccount::project_id() returns
         // Option<Arc<str>>, not Result. The Arc<str> derefs to str,
         // which implements ToString — avoids the as_ref ambiguity
         // (Arc<T> has both inherent as_ref() and one via Deref's AsRef).
-        self.provider
-            .project_id()
-            .map(|s| (*s).to_string())
+        self.provider.project_id().map(|s| (*s).to_string())
+    }
+}
+
+fn source_file_available(path: &Path) -> bool {
+    path.metadata().map(|meta| meta.is_file()).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_file_available;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn source_file_must_exist_and_be_a_regular_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("popo-auth-{unique}"));
+        let file = dir.join("service-account.json");
+
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!source_file_available(&file));
+        assert!(!source_file_available(&dir));
+
+        std::fs::write(&file, b"{}").unwrap();
+        assert!(source_file_available(&file));
+
+        std::fs::remove_file(&file).unwrap();
+        assert!(!source_file_available(&file));
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

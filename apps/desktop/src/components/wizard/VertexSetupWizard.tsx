@@ -30,19 +30,9 @@ import { useSettingsStore } from "../../store/settingsStore";
  */
 
 export const VERTEX_REGIONS: { value: string; label: string }[] = [
-  { value: "us-central1", label: "us-central1 (Iowa)" },
-  { value: "us-east1", label: "us-east1 (S. Carolina)" },
-  { value: "us-east4", label: "us-east4 (N. Virginia)" },
-  { value: "us-west1", label: "us-west1 (Oregon)" },
-  { value: "europe-west1", label: "europe-west1 (Belgium)" },
-  { value: "europe-west2", label: "europe-west2 (London)" },
-  { value: "europe-west3", label: "europe-west3 (Frankfurt)" },
-  { value: "europe-west4", label: "europe-west4 (Netherlands)" },
-  { value: "asia-south1", label: "asia-south1 (Mumbai)" },
-  { value: "asia-southeast1", label: "asia-southeast1 (Singapore)" },
-  { value: "asia-northeast1", label: "asia-northeast1 (Tokyo)" },
-  { value: "australia-southeast1", label: "australia-southeast1 (Sydney)" },
-  { value: "global", label: "global (auto-route)" },
+  { value: "global", label: "global (recommended · auto-route)" },
+  { value: "us", label: "us (United States multi-region)" },
+  { value: "eu", label: "eu (Europe multi-region)" },
 ];
 
 const TOTAL_STEPS = 4;
@@ -60,7 +50,7 @@ export default function VertexSetupWizard({
   const updateGcp = useSettingsStore((s) => s.updateGcp);
 
   const [step, setStep] = useState(0);
-  const [region, setRegion] = useState(gcp.vertexLocation || "us-central1");
+  const [region, setRegion] = useState(gcp.vertexLocation || "global");
   const [testState, setTestState] = useState<
     "idle" | "testing" | "ok" | "failed"
   >("idle");
@@ -72,7 +62,7 @@ export default function VertexSetupWizard({
   useEffect(() => {
     if (!open) return;
     setStep(0);
-    setRegion(gcp.vertexLocation || "us-central1");
+    setRegion(gcp.vertexLocation || "global");
     setTestState("idle");
     setTestNote(null);
   }, [open, gcp.vertexLocation]);
@@ -331,16 +321,16 @@ function RegionTestStep({
 }) {
   return (
     <StepBody
-      title="Pick a region and test"
-      description="Choose the region closest to you, then popo sends a tiny request to confirm everything works."
+      title="Pick a location and test"
+      description="Gemini 3.5 Flash-Lite supports global, us, and eu. Global is recommended, then popo sends a tiny request to confirm everything works."
     >
       <div style={{ marginTop: "var(--sp-4)" }}>
-        <Field label="Region">
+        <Field label="Location">
           <Select
             value={region}
             options={VERTEX_REGIONS}
             onChange={onRegionChange}
-            aria-label="Vertex region"
+            aria-label="Vertex location"
             minWidth={260}
           />
         </Field>

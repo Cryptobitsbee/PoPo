@@ -26,37 +26,10 @@ import type {
  * when the Rust side comes online.
  */
 /**
- * Fire a native Windows toast with the full error message. Tauri's
- * notification plugin handles OS-level display + notification-center
- * retention. Dynamically imported so pure Vite dev doesn't crash.
- *
- * Silent on failure (permission denied, plugin unavailable) — the
- * user still has the pill's hover-tooltip and the devtools console
- * as fallback diagnostic surfaces.
+ * Errors remain visible in the pill's accessible ErrorTooltip. Native toast
+ * fallback was removed because it was unreliable on unsigned/dev builds and
+ * pulled in a vulnerable Windows XML notification stack.
  */
-async function fireErrorToast(payload: PillErrorPayload) {
-  try {
-    const { isPermissionGranted, requestPermission, sendNotification } =
-      await import("@tauri-apps/plugin-notification");
-
-    // On most fresh Windows installs the perm has to be requested once.
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const res = await requestPermission();
-      granted = res === "granted";
-    }
-    if (!granted) return;
-
-    sendNotification({
-      title: "popo — dictation error",
-      body: payload.message || payload.code || "Unknown error",
-    });
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn("[popo] could not fire error toast:", e);
-  }
-}
-
 export function usePillEvents() {
   const setState = usePillStore((s) => s.setState);
   const setBars = usePillStore((s) => s.setBars);
@@ -89,14 +62,6 @@ export function usePillEvents() {
         (evt) => {
           if (disposed) return;
           setError(evt.payload);
-          // Fire a native Windows toast ONLY for true errors. Info-level
-          // hints ("finish GCP setup") are soft nudges — firing a
-          // notification-center toast for those would be spammy and
-          // duplicate the pill's in-webview tooltip that's already
-          // visible for 10s.
-          if (evt.payload.severity !== "info") {
-            void fireErrorToast(evt.payload);
-          }
         },
       );
       unlistens.push(errorUnlisten);

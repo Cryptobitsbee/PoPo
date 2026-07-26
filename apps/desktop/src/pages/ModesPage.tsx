@@ -114,8 +114,9 @@ export default function ModesPage() {
           maxWidth: 520,
         }}
       >
-        Modes are named presets for the AI polish step. Pick one per dictation
-        to shape the tone, format, and language of the output.
+        Modes are named presets for the AI polish step. Auto-format must be
+        enabled in Settings before any mode, app binding, or mode hotkey can
+        change a transcript.
       </p>
 
       {/* Grid */}

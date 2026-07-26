@@ -91,11 +91,7 @@ pub async fn cmd_set_gcp_config(
         tracing::warn!("could not persist GCP config: {e}");
     }
 
-    tracing::info!(
-        "GCP config saved: project_id={} path={}",
-        config.project_id,
-        config.service_account_path
-    );
+    tracing::info!("GCP config saved and validated");
 
     Ok(())
 }
@@ -105,9 +101,13 @@ pub async fn cmd_set_gcp_config(
 #[tauri::command]
 pub fn cmd_get_gcp_config(state: State<'_, PopoState>) -> Result<GetGcpConfigResult, String> {
     let slot = state.gcp.lock().map_err(|e| format!("state lock: {e}"))?;
-    if let Some((cfg, _)) = slot.as_ref() {
+    if let Some((cfg, auth)) = slot.as_ref() {
         Ok(GetGcpConfigResult {
-            configured: true,
+            // "configured" means the stored fields are complete AND
+            // the authoritative source JSON is still present. Keep
+            // returning the path/project below so Settings can show
+            // what needs to be repaired when this is false.
+            configured: cfg.is_configured() && auth.source_file_available(),
             service_account_path: cfg.service_account_path.clone(),
             project_id: cfg.project_id.clone(),
             language_code: cfg.language_code.clone(),
@@ -264,9 +264,7 @@ pub async fn cmd_gemini_test_connection(
             message: "No AI Studio API key set. Add one above.".into(),
         });
     }
-    let backend = crate::gcp::gemini::GeminiBackend::AiStudio {
-        api_key: &api_key,
-    };
+    let backend = crate::gcp::gemini::GeminiBackend::AiStudio { api_key: &api_key };
     Ok(match crate::gcp::gemini::test_connection(backend).await {
         Ok(()) => GcpTestResult {
             ok: true,
@@ -300,6 +298,14 @@ fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(p)
 }
 
+pub(crate) fn delete_persisted_gcp_config(app: &AppHandle) -> Result<(), String> {
+    let path = config_file_path(app)?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("delete {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn persist_gcp_config(app: &AppHandle, cfg: &GcpConfig) -> Result<(), String> {
     let path = config_file_path(app)?;
     let disk = DiskConfig {
@@ -324,14 +330,14 @@ pub async fn restore_gcp_config_on_boot(app: &AppHandle, state: &PopoState) {
     };
 
     if !path.exists() {
-        tracing::info!("no existing GCP config at {}", path.display());
+        tracing::info!("no persisted GCP config found");
         return;
     }
 
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!("could not read {}: {e}", path.display());
+            tracing::warn!("could not read persisted GCP config: {e}");
             return;
         }
     };
@@ -339,7 +345,7 @@ pub async fn restore_gcp_config_on_boot(app: &AppHandle, state: &PopoState) {
     let disk: DiskConfig = match serde_json::from_slice(&bytes) {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!("could not parse {}: {e}", path.display());
+            tracing::warn!("could not parse persisted GCP config: {e}");
             return;
         }
     };
@@ -358,17 +364,11 @@ pub async fn restore_gcp_config_on_boot(app: &AppHandle, state: &PopoState) {
         Ok(auth) => {
             if let Ok(mut slot) = state.gcp.lock() {
                 *slot = Some((config.clone(), auth));
-                tracing::info!(
-                    "GCP config restored from disk: project_id={}",
-                    config.project_id
-                );
+                tracing::info!("GCP config restored and validated from disk");
             }
         }
         Err(e) => {
-            tracing::warn!(
-                "service account at {} no longer valid: {e}",
-                config.service_account_path
-            );
+            tracing::warn!("persisted GCP service account is no longer valid: {e}");
         }
     }
 }

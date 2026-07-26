@@ -42,13 +42,13 @@ LangString failedToKillApp ${LANG_ENGLISH} "Couldn't close popo automatically. P
 
 ; Shown on the confirmation page BEFORE the files are removed.
 ; This is the prompt the user sees asking whether to also wipe
-; their local data (%APPDATA%\popo — history db, audio files,
-; settings cache, gcp-sa.json).
+; their local data (bundle-id AppData plus the separate diagnostics folder).
 ;
-; We want the copy here to be warm but honest about what happens:
-; local data goes away, anything synced to Firebase stays safe.
+; Local deletion removes preferences, WebView records, optional WAVs,
+; GCP path/project metadata, the DPAPI Gemini key, and diagnostics. It does
+; not delete the external service-account JSON or any cloud data.
 ; Default: "Do you want to remove the application data as well?"
-LangString deleteAppData ${LANG_ENGLISH} "Also delete popo's local data?$\r$\n$\r$\nThis removes your cached settings, local history, and stored audio from this machine. Anything synced to your account stays safe in the cloud."
+LangString deleteAppData ${LANG_ENGLISH} "Also delete popo's local data?$\r$\n$\r$\nThis removes cached settings, optional stored audio, protected Gemini credentials, and diagnostics from this machine. Your external Google service-account JSON and anything synced to your account are not deleted."
 
 ; Shown when the uninstaller can't remove popo (usually because
 ; something on disk is still locked). Rare — our in-app flow

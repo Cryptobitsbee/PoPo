@@ -169,8 +169,13 @@ it the default.
 
 ### Auth
 
-User-provided **service account JSON** via Settings → GCP Setup, stored at
-`%APPDATA%\popo\gcp-sa.json`. `gcp-auth` caches tokens per-process.
+User-provided **service account JSON** via Settings → GCP Setup. popo stores
+only the selected path/project/language in
+`%APPDATA%\ai.popo.desktop\gcp.json`; it never copies the key. The original
+JSON remains authoritative. `gcp-auth` may cache parsed key material and OAuth
+tokens in-process for performance, but every token access first verifies that
+the selected source path is still a regular file; deleting or moving it disables
+Speech-to-Text and Vertex AI immediately.
 
 ### Alternatives rejected
 
@@ -185,23 +190,23 @@ User-provided **service account JSON** via Settings → GCP Setup, stored at
 
 ## 6. Post-processing (AI polish)
 
-### Decision: Gemini Flash (`gemini-1.5-flash`), REST, per-mode toggle, 800ms timeout
+### Decision: Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`), REST, master Auto-format switch
 
-- Off by default for v0.1 (just raw transcript → paste).
-- Per-mode toggle in the Mode editor. Auto / Casual / Professional / Email
-  / Code can individually opt in.
-- Timeout budget 800ms; on timeout or error, paste the raw transcript.
-  Users should never notice a polish failure; they just get the raw text.
-
-### Why Gemini Flash over GPT-4o-mini / Claude Haiku
-
-- **Cost**: Flash is the cheapest first-tier offering in late 2025 at
-  <$0.10 per million tokens.
-- **Latency**: sub-400ms typical for 1k-token inputs.
-- **Already in the Google stack**: same billing, same credentials surface
-  for the user (though a separate API key; noted in GCP Setup wizard).
-- Swap-in is easy if we change our mind later — the polish step is one
-  function.
+- Auto-format is the strict master switch. When off, no mode prompt,
+  app binding, mode hotkey, Chirp custom prompt, or Gemini polish applies.
+- Provider is selected explicitly in Settings:
+  - **AI Studio** uses `x-goog-api-key`.
+  - **Vertex AI** reuses the configured GCP service-account OAuth token,
+    project ID, and selected Vertex location. Gemini 3.5 Flash-Lite is
+    available at `global`, `us`, and `eu`; popo defaults to `global` and
+    normalizes legacy single-region settings to `global` to avoid 404s.
+- Both providers call the same stable GA model with the generateContent
+  request shape; only endpoint and authentication differ.
+- Gemini 3.5 Flash-Lite defaults to minimal thinking. Requests omit the
+  deprecated `temperature`, `top_p`, and `top_k` sampling fields and the
+  2.5-only `thinkingBudget` field.
+- Calls have a 12-second wall-clock ceiling and fail open: on timeout or
+  provider error, popo pastes the raw Chirp transcript.
 
 ## 7. Paste mechanic
 
@@ -393,10 +398,10 @@ recording UI, contradicting the pill-is-ambient principle).
 
 ## 15. Security stance
 
-- The GCP service-account JSON is the most sensitive thing on disk. It is
-  stored at `%APPDATA%\popo\gcp-sa.json` (per-user, not world-readable on
-  Windows 10/11 default ACL) and never transmitted anywhere. `tauri-plugin-fs`
-  scope is locked to that single path.
+- The GCP service-account JSON is the most sensitive input. It remains at the
+  user-selected path and is never copied into popo storage. Only path/project/
+  language metadata is stored in `%APPDATA%\ai.popo.desktop\gcp.json`.
+  Deleting or moving the source file makes token access fail closed.
 - Clipboard restore runs in all success paths and in all error paths where
   we wrote to the clipboard except one (paste exhausted all methods — see
   systemPatterns.md).

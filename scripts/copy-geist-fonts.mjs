@@ -26,12 +26,23 @@ const DEST = resolve(ROOT, "apps/desktop/public/fonts");
 // pnpm hoists geist into .pnpm/geist@<ver>_<peer-hash>/node_modules/geist/
 // Walk .pnpm looking for any "geist" directory.
 function findGeistFontsDir() {
+  // Prefer the workspace dependency symlink. Searching the pnpm virtual store
+  // first can select a stale package version left by an earlier install and
+  // silently rewrite tracked font assets during predev/prebuild.
+  const directCandidates = [
+    resolve(ROOT, "apps/desktop/node_modules/geist/dist/fonts/geist-pixel"),
+    resolve(ROOT, "node_modules/geist/dist/fonts/geist-pixel"),
+  ];
+  for (const candidate of directCandidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
   const pnpmRoot = resolve(ROOT, "node_modules/.pnpm");
   if (!existsSync(pnpmRoot)) return null;
-  const entries = readdirSync(pnpmRoot, { withFileTypes: true });
+  const entries = readdirSync(pnpmRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("geist@"))
+    .sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }));
   for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    if (!e.name.startsWith("geist@")) continue;
     const candidate = join(
       pnpmRoot,
       e.name,
@@ -39,9 +50,7 @@ function findGeistFontsDir() {
     );
     if (existsSync(candidate)) return candidate;
   }
-  // Fallback: hoisted layout
-  const flat = resolve(ROOT, "node_modules/geist/dist/fonts/geist-pixel");
-  return existsSync(flat) ? flat : null;
+  return null;
 }
 
 const src = findGeistFontsDir();

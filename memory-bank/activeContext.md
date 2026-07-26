@@ -4,6 +4,252 @@
 
 ## Current phase
 
+**SESSION 61 — Security, privacy, open-source configuration, and Windows release trust hardening.**
+
+Completed implementation:
+- Removed desktop OAuth client-secret use; added independent state + PKCE S256,
+  validated Google opener URL, hardened bounded/random-port loopback listener,
+  and main-only callback delivery. Callback uses embedded tracked Geist Pixel
+  Square and no external font request.
+- Added centralized custom-command origin gating plus split main/pill/switcher
+  capabilities; routed pill/session/OAuth/test events only to intended webviews;
+  added restrictive production/dev CSP and disabled wildcard asset protocol.
+- Added Windows current-user DPAPI persistence/migration for Gemini keys;
+  removed key localStorage serialization; local deletion removes DPAPI key and
+  GCP metadata but never the external service-account JSON.
+- Constrained local WAV IPC and native export paths; removed broad fs,
+  notification, shell opener, arbitrary read/write, and unused plugin grants.
+- Reworked cloud audio to persist authenticated Storage object paths rather
+  than new bearer URLs; stripped local paths/legacy URLs/icons from new session
+  documents while retaining legacy playback.
+- Implemented direct exhaustive Firestore/Storage account deletion and
+  non-syncing local resets; individual deletion now removes local/cloud audio
+  regardless of current privacy mode. Uninstall local-data choice also removes
+  separate diagnostics.
+- Removed Firebase Analytics; made Firestore DB configurable; required complete
+  Firebase public config; hardened Firestore/Storage Rules with explicit
+  collections, bounded schemas/paths/types/sizes, owner checks, and default deny.
+- Removed transcript/prompt and credential-path details from release logs;
+  logs rotate at 5 MiB with one predecessor and account deletion schedules
+  guaranteed next-launch removal.
+- Updated vulnerable JS/Rust dependencies, removed Next auto-peer and native
+  notification dependency, added OSV/RustSec/CodeQL/Gitleaks/dependency-review
+  automation, and replaced copied npm-project CI/config.
+- Added `PRIVACY.md`, PoPo-specific `SECURITY.md`,
+  `SECURITY_AUDIT_REPORT.md`, `docs/OPEN_SOURCE_CONFIGURATION.md`, and
+  `docs/RELEASE_SECURITY_CHECKLIST.md`. README/uninstaller copy now matches
+  actual storage/deletion behavior. No license was chosen; this remains a
+  public-release blocker requiring owner decision.
+
+Validation evidence:
+- Rust: 20 unit tests passed, including OAuth, audio boundary, export filename,
+  DPAPI round-trip, and custom IPC origin tests; format check and release check
+  pass.
+- Frontend: TypeScript and production Vite build pass (5073 modules).
+- Runtime: `pnpm --filter desktop tauri dev` started Vite + debug executable;
+  GCP config restore, Chirp channel/streaming prewarm, hotkeys, and all normal
+  main settings IPC completed without runtime or blocked-command errors.
+- Dependency/security: RustSec reports zero vulnerabilities (remaining warnings
+  are unmaintained target/transitive crates); OSV reports no applicable npm
+  vulnerabilities, with one explicit non-applicable React Router RSC/server
+  action advisory; tracked secret-signature scan is clean; Next and notification
+  packages are absent; fs plugin is dialog-only transitive.
+- Firebase rules: Firestore rules compiled in the official local emulator JAR;
+  Storage rules compiled/linted in the official rules runtime (recursive-match
+  lint notices are expected for owner tree deletion/default deny).
+- Config/release: Tauri CSP/capabilities parse; `git diff --check` and the
+  repository secret-signature scan pass. Frozen install reproduces the graph;
+  repeated prebuild/release builds preserve the canonical Geist Pixel Square
+  hash. The NSIS release build succeeds, but `popo.exe` and
+  `popo_0.1.0_x64-setup.exe` both verify `NotSigned`; signing/timestamping remain
+  owner actions. A second independent reviewer focused on the Geist pin/copier,
+  lockfile, report claims, and Sessions 58–60 preservation and returned
+  `APPROVED` with no blocking finding.
+
+Owner/manual release actions still required:
+1. Add an OSI license and production publisher legal/privacy contact.
+2. Deploy current rules, configure production API restrictions/quotas/budgets,
+   and test OAuth/audio/full deletion with disposable real credentials/accounts.
+3. Run exact release-candidate STT, both Gemini providers, sync/audio/deletion,
+   pill/switcher, CSP, paste, installer/uninstaller smoke matrix.
+4. Complete Partner Center and/or Artifact Signing/OV-EV identity validation;
+   sign/timestamp, verify, Defender-scan, hash, and publish only reviewed
+   artifacts. See the release checklist.
+
+No commit was created. The large Sessions 58–60 working tree remains preserved.
+
+### Previous session context
+
+**SESSION 60 — Compact Quick Switcher redesign and evidence-based backlog reconciliation.**
+
+Runtime status:
+- The user has now confirmed that both Chirp 3 STT and Gemini AI work in the
+  repaired Session 59 runtime. The old Session 59 runtime-retest checklist is
+  historical, not an active blocker.
+
+Completed in this session:
+- Redesigned only the `Ctrl+Shift+M` Quick Switcher. The main Modes page was not
+  changed.
+- Reduced the Tauri switcher window from 480×380 to 360×300.
+- Replaced prompt previews and app-icon stacks with compact 38px rows containing
+  the mode name, a small active check, and an optional hotkey.
+- Replaced the disallowed 2px selection stripe with a quiet full-row tint and
+  border; reduced the search field to 34px and collapsed footer help to one line.
+- Preserved search, sorting, cross-webview settings/modes hydration, focus
+  restoration, Escape, arrows, Home/End, Enter, sticky default updates, and
+  direct Rust binding/prompt IPC.
+- Preserved the Auto-format master gate: while off there is no active/default
+  marker, no mouse or keyboard mode selection, and no binding/prompt IPC. The
+  saved default remains dormant until Auto-format is enabled.
+- Added `apps/desktop/PRODUCT.md` so the Impeccable context loader resolves the
+  already-established product register and strategic design rules.
+
+Validation:
+- `pnpm --filter desktop typecheck` passed.
+- `pnpm --filter desktop build` passed with 5069 modules transformed.
+- `git diff --check` passed.
+- Focused diff review confirmed that the presentation and switcher dimensions
+  changed without removing the behavior gates above. Existing build warnings
+  remain limited to Node's `module.register()` deprecation and the known large
+  bundle chunk.
+
+Backlog reconciliation:
+- The v0.1 phase checklist and paste matrix are complete. The unchecked roadmap
+  boxes in `POPO_BRIEF.md` are stale historical prose.
+- True not-started `docs/ROADMAP.md` features are #1 transforms, #2 voice
+  commands, #3 context-aware dictation, #5 crash audio recovery, #6 continue
+  thought, #10 smart vocabulary, #15 stats expansion, and #18 mic errors.
+- #12, #19, and #20 are shipped. #17 pinning is shipped; usage-rank telemetry is
+  the only deferred part.
+- The source scan found no missing core implementation hidden behind TODO/FIXME
+  markers. DotMatrix is a working in-house implementation with stale
+  `PLACEHOLDER` wording. The old pending-switcher Rust commands/state have no
+  frontend caller and are cleanup debt after sticky mode selection replaced
+  one-shot switcher picks.
+
+Recommended continuous order:
+1. Current-release closeout: runtime visual/interaction smoke for the compact
+   switcher, reconcile stale docs, remove dead pending-switcher state, then make
+   and smoke-test a fresh release installer.
+2. #18 actionable microphone errors.
+3. #5 crash audio recovery.
+4. #10 smart vocabulary + #17 usage telemetry + #15 stats expansion.
+5. #2 voice editing commands.
+6. #1 selection-based transforms.
+7. #3 context-aware dictation, then dependent #6 continue thought.
+8. Production work: updater/release channel, code signing and Windows validation;
+   offline Whisper remains the larger v1.0 item.
+
+No commit was created. Existing uncommitted Sessions 58–59 reliability work is
+preserved.
+
+### Previous session
+
+**SESSION 59 — Runtime repair: Chirp 3 GA region, Gemini 3.5 Vertex location, and unambiguous disabled-mode UX.**
+
+User logs supplied the decisive runtime evidence:
+- Auto-format was off and backend mode gating worked (`on_press: custom_prompt
+  empty`), but QuickSwitcher still highlighted/persisted a default and emitted
+  binding/prompt sync logs, making the disabled mode look active.
+- Chirp returned PERMISSION_DENIED for `model chirp_3 locale auto` because popo
+  was still targeting preview `asia-south1`, where Google says that locale is
+  no longer generally available.
+- Gemini prewarm returned Vertex HTTP 404 because the stored/default location
+  was `us-central1`; Gemini 3.5 Flash-Lite is available only at `global`, `us`,
+  and `eu`.
+
+Implemented:
+- Speech v2 endpoint/recognizer moved to Google's documented GA `eu`
+  multi-region. Official Chirp 3 docs updated 2026-07-22 still prescribe
+  `language_codes=["auto"]` and list `us`/`eu` as GA, so real language-agnostic
+  detection is preserved instead of silently forcing one locale.
+- Vertex defaults to `global`; UI offers only `global`, `us`, and `eu`.
+  Unsupported persisted values normalize to `global` in settings hydration,
+  Rust IPC, and the final endpoint builder. Two tests cover supported scopes
+  and legacy `us-central1` normalization.
+- QuickSwitcher reads Auto-format directly. While off it shows no default or
+  keyboard highlight, disables mouse/Enter/navigation selection, emits no
+  mode-binding or prompt commands, and says no mode is active. The saved
+  default is intentionally retained for when Auto-format is re-enabled.
+- README, technical spec, progress, tech context, and system patterns updated.
+
+Validation completed:
+- `cargo test`: 6 passed, 0 failed.
+- `cargo check`: clean.
+- `pnpm --filter desktop typecheck`: clean.
+- `pnpm --filter desktop build`: clean (5069 modules; existing chunk-size
+  and Node deprecation warnings only).
+- `cargo fmt` and `git diff --check`: clean.
+
+Immediate runtime retest after rebuilding/restarting popo:
+1. Keep Auto-format off, open QuickSwitcher, confirm no row is active and picks
+   are disabled; dictate and confirm `custom_prompt empty`.
+2. Dictate with Language=Auto and confirm requests identify region `eu` and no
+   longer return the `locale auto ... no longer generally available` error.
+3. With Vertex selected, use location `global`, run Test connection, then
+   dictate with Auto-format on and confirm prewarm/polish no longer returns 404.
+
+### Previous session
+
+**SESSION 58 — Reliability fixes after multi-device testing: strict mode gating, source-authoritative GCP credentials, Gemini 3.5 Flash-Lite, and uninstall/autostart cleanup.**
+
+User runtime-confirmed Session 57's Vertex AI provider works. Source audit
+also confirmed provider selection is consistently honored by Settings test,
+boot/periodic prewarm, and the real hotkey polish path through the shared
+`GeminiBackend` seam.
+
+Shipped in this session:
+- **Auto-format is now a strict master switch.** The previous per-mode
+  hotkey branch returned a forced prompt before checking
+  `auto_format_enabled`; that let Chirp custom prompting and mode sounds
+  survive after the toggle was turned off. The gate now runs first for
+  default, app-bound, switcher-selected, and forced-hotkey modes. ModesPage,
+  QuickSwitcher, and Settings explain the dependency. Two Rust regression
+  tests cover forced mode OFF/ON behavior.
+- **GCP source JSON is authoritative.** No copy ever existed despite stale
+  docs. The key was parsed once into `Arc<CustomServiceAccount>`, so deleting
+  the source did not affect the in-memory provider. `Authenticator::access_token`
+  now verifies the configured path is still a regular file before every
+  token use. This centrally covers Chirp, Vertex, connection tests, prewarm,
+  and keep-warm. `cmd_get_gcp_config.configured` is false while the source is
+  missing. README/TECHNICAL_SPEC/techContext now state that `gcp.json` stores
+  only path/project/language metadata.
+- **Gemini upgraded to stable GA `gemini-3.5-flash-lite`** for both AI Studio
+  and Vertex. Migration follows Google's July 2026 generateContent guidance:
+  deprecated `temperature`/`top_p`/`top_k` and 2.5-only `thinkingBudget` are
+  omitted; the model's default minimal thinking level is used.
+- **Autostart/uninstall residue fixed.** Read-only machine inspection found
+  the exact ghost entry: HKCU Run value `popo` pointed to
+  `target\\debug\\popo.exe`, which explains the visible terminal logs and pill
+  after uninstalling the installed release. Debug builds now ignore all
+  autostart mutations, first-run auto-enable is release-only, in-app uninstall
+  disables the plugin entry first, and NSIS deletes `popo` plus the historical
+  identifier variant after uninstall confirmation.
+- **Paste gate closed from user evidence.** User confirmed the tested app set
+  works across multiple devices with custom per-app paste keys.
+  `PASTE_TEST_RESULTS.md` now records 28 application rows as passing, UAC and
+  DirectX as expected OS failures, and full-screen RDP as environment-dependent.
+
+Validation completed:
+- `cargo test`: 3 passed, 0 failed.
+- `cargo check`: clean.
+- `cargo fmt --check` + `git diff --check`: clean.
+- `pnpm --filter desktop typecheck`: clean.
+- `pnpm --filter desktop build`: clean (5069 modules, 1180 KB / 304 KB gz).
+- `pnpm --filter desktop tauri build --bundles nsis`: release compile and
+  makensis succeeded; installer generated at
+  `target/release/bundle/nsis/popo_0.1.0_x64-setup.exe`.
+
+Immediate manual smoke tests for the built installer:
+1. Test Auto-format ON/OFF with a default mode and dedicated mode hotkey.
+2. Test AI Studio and Vertex connection + one dictation each on Gemini 3.5.
+3. Delete/move the selected GCP JSON, then verify both STT and Vertex fail
+   closed without restarting; restore/reselect it and retest.
+4. Enable Start at login, uninstall, then verify no popo HKCU Run value and
+   no popo process after sign-out/reboot.
+
+### Earlier session
+
 **SESSION 57 — Selectable Gemini provider: AI Studio vs Vertex AI, chosen explicitly in Settings with a per-provider connection test.**
 
 Why: Google AI Studio's free Gemini API tier tightened limits. Vertex
@@ -34,7 +280,7 @@ Rust:
   + `prewarm()` now take a `GeminiBackend`. New `test_connection()`
   sends a 1-token ping and surfaces HTTP status + body on failure.
 - `hotkey/mod.rs` PopoState: `gemini_provider` (default "aistudio") +
-  `vertex_location` (default "us-central1"). `on_release` resolves the
+  `vertex_location` (now default "global"; Session 59). `on_release` resolves the
   provider, snapshots creds out of the mutexes, mints the Vertex OAuth
   token via the gcp `Authenticator` (async, before the polish await),
   builds the backend, calls polish. Fail-open unchanged.
@@ -48,7 +294,7 @@ Rust:
 
 Frontend:
 - shared-types `GCPSettings`: `geminiProvider: "aistudio"|"vertex"`
-  (default aistudio) + `vertexLocation: string` (default us-central1).
+  (default aistudio) + `vertexLocation: string` (now default global).
   Machine-local, never synced (same as `geminiApiKey`). hydrate's
   `{...fallback, ...stored}` merge backfills the new fields for
   existing users.

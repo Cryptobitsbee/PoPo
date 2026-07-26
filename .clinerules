@@ -2603,3 +2603,25 @@ are stale dead code — delete them. Same goes for
 5. **MED**: Tauri updater plugin for OTA updates.
 6. **LOW**: voice-pick inside Quick switcher; Hinglish/Tenglish
    dedicated mode; per-phrase boost UI for dictionary.
+
+## Session 58 — Reliability fixes after multi-device testing
+
+- User confirmed Vertex AI runtime success and paste compatibility across tested apps/devices.
+- Audited all Gemini call sites: Settings test, prewarm, keep-warm, and hotkey polish consistently use `PopoState.gemini_provider` through `GeminiBackend`.
+- Fixed forced per-mode hotkeys bypassing `auto_format_enabled`; the master gate now precedes all mode resolution and mode-specific sound selection. Added OFF/ON regression tests and dependency copy in Modes, Quick Switcher, and Settings.
+- Fixed service-account deletion behavior at `Authenticator::access_token`: original source path must still be a regular file before cached key material/token provider can be used. No key copy exists; only path/project/language live in app `gcp.json`.
+- Upgraded both Gemini providers to stable GA `gemini-3.5-flash-lite`; removed deprecated sampling fields and 2.5-only `thinkingBudget`, retaining `maxOutputTokens` and default minimal thinking.
+- Root-caused post-uninstall terminal/pill to HKCU Run value `popo` targeting `target\\debug\\popo.exe`. Debug autostart mutations are now disabled; in-app uninstall calls plugin disable; NSIS removes `popo` and `ai.popo.desktop` Run values after confirmation.
+- Validation: 3 Rust tests pass; cargo check/fmt and diff check pass; frontend typecheck/build pass; release NSIS bundle builds successfully.
+
+
+### Session 59 (Chirp/Vertex runtime availability correction)
+- User logs proved Auto-format backend gating was already effective, but the
+  QuickSwitcher still looked active. Disabled master features must also disable
+  selector highlights and selection commands; saved defaults may remain dormant.
+- Chirp 3 `language_codes=["auto"]` is still official, but popo's preview
+  `asia-south1` endpoint rejected it as no longer generally available. Use the
+  documented GA `eu` Speech multi-region for production reliability.
+- Gemini 3.5 Flash-Lite Vertex availability is `global`, `us`, and `eu` only.
+  Default to `global` and normalize old single-region settings at hydration,
+  IPC, and endpoint construction so stale values cannot keep causing 404s.

@@ -47,7 +47,7 @@ export default function GeminiSetup() {
       await invoke("cmd_set_gemini_api_key", { key: gcp.geminiApiKey ?? null });
       await invoke("cmd_set_gemini_provider", {
         provider: gcp.geminiProvider ?? "aistudio",
-        location: gcp.vertexLocation ?? "us-central1",
+        location: gcp.vertexLocation ?? "global",
       });
       const res = await invoke<{ ok: boolean; message: string }>(
         "cmd_gemini_test_connection",
@@ -144,12 +144,12 @@ export default function GeminiSetup() {
             </Button>
           </SettingRow>
 
-          <SettingRow label="Region" hint="Where your Vertex requests are served. Pick the region closest to you; 'global' lets Google route automatically.">
+          <SettingRow label="Location" hint="Gemini 3.5 Flash-Lite supports global, us, and eu. Global is recommended and lets Google route automatically.">
             <Select
-              value={gcp.vertexLocation || "us-central1"}
+              value={gcp.vertexLocation || "global"}
               options={VERTEX_REGIONS}
               onChange={(v) => updateGcp({ vertexLocation: v })}
-              aria-label="Vertex region"
+              aria-label="Vertex location"
               minWidth={240}
             />
           </SettingRow>

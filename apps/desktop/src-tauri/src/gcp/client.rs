@@ -1,39 +1,25 @@
-// gcp/client.rs — tonic Channel to {region}-speech.googleapis.com with TLS.
+// gcp/client.rs — tonic Channel to the GA `eu-speech.googleapis.com` endpoint.
 //
-// Endpoint + region choice (Session 31 update — Mumbai region landed):
-//   - Per Google Cloud release notes 2025-11-13: Chirp 3 launched in
-//     PUBLIC PREVIEW for `asia-south1` (Mumbai), `europe-west2`,
-//     `europe-west3`, and `northamerica-northeast1`. It remains GA in
-//     the `us` and `eu` multi-regions.
-//   - For popo's primary user (India, UTC+5:30):
-//       India → us-speech.googleapis.com:          ~220–300 ms RTT
-//       India → eu-speech.googleapis.com:          ~130–180 ms RTT
-//       India → asia-south1-speech.googleapis.com: ~20–50  ms RTT
-//     Cold TLS handshake is ~5 round-trips, so the Mumbai endpoint
-//     should cut first-dictation handshake time by ~400–600 ms and
-//     per-request latency by ~100–130 ms over EU.
-//   - asia-south1 is PREVIEW not GA. If we see functional regressions
-//     (e.g. a specific Chirp 3 feature not supported there), flip
-//     back to `eu` by changing the two constants below — no other
-//     code changes needed. Settings dropdown exposure is a later
-//     polish item.
-//   - Preview-language support within asia-south1: not explicitly
-//     documented in the release note. Empirically test with te-IN,
-//     ta-IN, etc. before relying on it for those locales.
+// Endpoint + region choice (Session 59 reliability correction):
+//   - Google's Chirp 3 model page (updated 2026-07-22) lists only the
+//     `us` and `eu` multi-regions as GA.
+//   - popo previously used the preview `asia-south1` endpoint for lower
+//     latency from India. Google now rejects Chirp 3's `auto` locale in
+//     that region with PERMISSION_DENIED / "It is no longer generally
+//     available", even though language-agnostic transcription remains
+//     GA in the `us` and `eu` multi-regions.
+//   - `eu` is the closer of the two documented GA choices for India and
+//     preserves Chirp's real `language_codes=["auto"]` behavior.
 //
 // Resilience:
 //   - The Channel is cached for the process lifetime via a
-//     tokio::sync::Mutex<Option<Channel>> so every dictation after
-//     the first reuses the same HTTP/2 connection.
-//   - build_channel uses exponential-backoff retry (3 attempts)
-//     for transient TLS/network failures.
-//   - The channel is pre-warmed at app startup (see lib.rs setup
-//     hook), so the first dictation doesn't pay the handshake cost.
-//   - On transport errors during recognize, callers can call
-//     `reset_channel()` to force a fresh build on the next request.
+//     tokio::sync::Mutex<Option<Channel>> so every dictation after the
+//     first reuses the same HTTP/2 connection.
+//   - build_channel uses exponential-backoff retry (3 attempts) for
+//     transient TLS/network failures.
+//   - The channel is pre-warmed at app startup.
 //
-// Auth: tokens minted per-call in `gcp/chirp.rs`, attached as an
-// `authorization: Bearer {token}` metadata header.
+// Auth: tokens are minted per call and attached as Bearer metadata.
 
 use std::time::Duration;
 
@@ -42,16 +28,14 @@ use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, ClientTlsConfig};
 
-/// Regional Speech v2 endpoint. **asia-south1 (Mumbai)** for the
-/// lowest latency from India — Chirp 3 launched there in public
-/// preview on 2025-11-13. To revert to a GA multi-region, swap this
-/// to `https://eu-speech.googleapis.com` and set SPEECH_REGION to
-/// `eu` (or `us` / `us-speech.googleapis.com`).
-pub const SPEECH_ENDPOINT: &str = "https://asia-south1-speech.googleapis.com";
+/// GA multi-region Speech v2 endpoint. `eu` preserves Chirp 3's
+/// language-agnostic `auto` locale while remaining the lower-latency
+/// documented GA choice for users in India.
+pub const SPEECH_ENDPOINT: &str = "https://eu-speech.googleapis.com";
 
-/// Region string used inside the recognizer resource path. Must match
-/// the endpoint host's region prefix.
-pub const SPEECH_REGION: &str = "asia-south1";
+/// Region embedded in the recognizer resource path. Must match the
+/// endpoint host's region prefix.
+pub const SPEECH_REGION: &str = "eu";
 
 /// Process-lifetime channel cache. `None` on startup; populated on
 /// first successful build. Mutex allows us to clear + rebuild on
@@ -203,5 +187,17 @@ pub async fn prewarm_streaming(auth: &crate::gcp::auth::Authenticator, project_i
                 t0.elapsed().as_millis()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_chirp_endpoint_uses_ga_eu_multi_region() {
+        assert_eq!(SPEECH_REGION, "eu");
+        assert_eq!(SPEECH_ENDPOINT, "https://eu-speech.googleapis.com");
+        assert!(!SPEECH_ENDPOINT.contains("asia-south1"));
     }
 }

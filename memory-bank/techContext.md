@@ -1,5 +1,45 @@
 # techContext.md — tech stack, versions, setup
 
+## Authoritative security/release snapshot (Session 61)
+
+This section supersedes legacy planning snippets later in this file.
+
+- Rust uses Tauri 2 with tray-icon plus global-shortcut, dialog, opener,
+  autostart, and single-instance plugins. Direct filesystem/notification
+  plugins, wildcard asset protocol, unconditional devtools, `rubato`, and
+  `rusqlite` are absent. `tauri-plugin-fs` is only a transitive implementation
+  dependency of the native dialog plugin and is not initialized/granted.
+- Audio resampling is hand-rolled; signed-out history is in memory, not SQLite.
+- Production CSP is default-deny for objects/forms/frames and allowlists only
+  required Firebase/Google endpoints, Tauri IPC, local/data fonts, profile
+  images, and blob/audio sources. Capabilities are split main/pill/switcher;
+  custom app commands also pass a centralized webview-label allowlist.
+- Rust emits pill events only to `pill`, OAuth/session/test data only to `main`,
+  and cross-webview store notifications explicitly. Do not revert to global
+  broadcast for payloads containing codes, transcripts, or test output.
+- Gemini AI Studio persistence is current-user Windows DPAPI at
+  `%APPDATA%\ai.popo.desktop\gemini-api-key.dpapi`; it is excluded from
+  localStorage/Firestore/logs. GCP JSON remains external and only
+  path/project/language metadata is persisted in `gcp.json`.
+- Firebase requires all public web config fields. Firestore DB ID is
+  configurable (`(default)` for normal forks, `popo-flow` for official
+  production). New session sync strips machine-local WAV paths, embedded app
+  icons, and legacy bearer URLs; cloud audio stores only
+  `audio/{uid}/{sessionId}.wav`.
+- Firestore/Storage Rules are schema/path/size bounded and default-deny.
+  `cloudDeletion.ts` must be updated with every future subcollection.
+- CI uses Node 20.19.1/pnpm 9.12.0, frontend type/build, Windows Rust tests and
+  release check, CodeQL, dependency review, Gitleaks, RustSec, and an OSV scan.
+  The sole accepted npm advisory is React Router's RSC/server-action issue,
+  unreachable in this static Vite/Tauri client.
+- `geist` is pinned exactly to `1.7.2`. `scripts/copy-geist-fonts.mjs` resolves
+  the desktop workspace's direct dependency before pnpm virtual-store fallback,
+  preventing stale package versions from rewriting tracked WOFF2 assets. The
+  canonical Square asset is 28,540 bytes with SHA-256
+  `80887AFEDE26BC861E92DBFBB17A775D769E46E7C84F336B1C9F17959F60606D`.
+
+
+
 ## Language / runtime versions
 
 - **Node**: 20 LTS (required by Vite 5+, Tauri CLI)
@@ -17,7 +57,7 @@
 | TypeScript        | 5.x             | Types                            |
 | Vite              | 5.x             | Build (Tauri default)            |
 | Tailwind CSS      | 4.x             | Styling                          |
-| `geist`           | latest          | Pixel font family                |
+| `geist`           | 1.7.2 (exact)    | Pixel font family                |
 | `@phosphor-icons/react` | latest    | Icons (regular, bold for CTAs)   |
 | `framer-motion`   | latest 11.x     | Pill morph + page transitions    |
 | `zustand`         | latest          | Pill/settings/history stores     |
@@ -78,12 +118,17 @@ VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
-VITE_GCP_PROJECT_ID=
+VITE_FIRESTORE_DATABASE_ID=(default)
+VITE_GOOGLE_DESKTOP_CLIENT_ID=
 ```
 
+These are public client identifiers. There is intentionally no desktop OAuth
+client secret and no runtime GCP/Gemini credential in `VITE_*`.
+
 GCP service account JSON path is NOT in env. It is configured per-user in
-Settings → GCP Setup and stored in the OS-appropriate app data dir
-(`%APPDATA%\popo\gcp-sa.json`). `tauri-plugin-fs` scope allows only that file.
+Settings → GCP Setup. popo stores only path/project/language metadata in
+`%APPDATA%\ai.popo.desktop\gcp.json`; the original selected JSON is never
+copied and must remain available for Speech-to-Text and Vertex AI.
 
 ## Audio pipeline specs
 
@@ -121,28 +166,41 @@ Settings → GCP Setup and stored in the OS-appropriate app data dir
   ```
 - Auth: `gcp-auth` using the user-provided service account JSON. Token cached
   per-process, refreshed proactively.
-- Region: default global endpoint; users may set `us-central1` etc. later.
+- Speech region: `eu` GA multi-region. The former preview `asia-south1`
+  endpoint rejected Chirp 3 locale `auto` as no longer generally available.
+- Gemini Vertex location: `global` by default; only `global`, `us`, and `eu`
+  are offered for Gemini 3.5 Flash-Lite. Legacy single-region values normalize
+  to `global`.
 
-## Post-processing (v0.2)
+## Post-processing
 
-- Gemini Flash `gemini-1.5-flash` via REST.
-- System prompt = mode's `systemPrompt`.
-- Request: `{ contents: [{ role: "user", parts: [{ text: transcript }]}]}`
-  with `system_instruction: { parts: [{ text: mode.systemPrompt }]}`.
-- Fallback: if call fails or exceeds 800ms, paste the raw transcript.
+- Model: stable GA `gemini-3.5-flash-lite` via REST `generateContent`.
+- Provider is explicit and machine-local:
+  - AI Studio uses the configured API key.
+  - Vertex AI reuses the GCP service-account OAuth token/project and selected location.
+- Auto-format is the master gate for all modes and Gemini polish.
+- Request keeps `maxOutputTokens`; deprecated 3.5 sampling fields and
+  2.5-only `thinkingBudget` are omitted. Default thinking is minimal.
+- 12-second ceiling; any error fails open to the raw Chirp transcript.
 
 ## Firebase
 
-- Auth: Google OAuth via Firebase JS SDK in the main window webview only.
-  ID token shared with Rust via `invoke()` command that takes the token and
-  uses it for Firestore writes via REST.
-  - Rationale: keeping the Firebase JS SDK out of the Rust side avoids WASM
-    surface area; Rust just does signed REST calls.
-- Firestore paths: `users/{uid}/settings`, `users/{uid}/modes/{id}`,
-  `users/{uid}/sessions/{id}`.
-- Rules: read/write only when `request.auth.uid == uid`.
-- Local mirror: `rusqlite` (`%APPDATA%\popo\popo.db`). History writes go to
-  SQLite synchronously, Firestore async/best-effort.
+- Google sign-in uses system-browser authorization code + PKCE S256 + random
+  state + random-port `127.0.0.1` callback in Tauri. No client secret exists.
+- Firebase JS SDK owns Auth, Firestore, and Storage. Main-window hooks own
+  sign-in, history/settings/data sync, audio upload, and account deletion.
+- Firestore paths are explicit under `users/{uid}`: profile plus `sessions`,
+  `modes`, `snippets`, `dictionary`, `appIcons`, `settings/doc`, and
+  `_diagnostics/ping`. Rules require authenticated ownership, bounded schemas,
+  and default deny.
+- Storage is owner-only flat WAV objects at `audio/{uid}/{sessionId}.wav`,
+  `audio/wav`, non-empty, at most 10 MiB. Playback resolves authenticated
+  download URLs on demand; legacy persisted URLs remain read-compatible only.
+- Signed-out session history is process memory. There is no SQLite local mirror.
+- Complete deletion queries all known cloud subcollections directly (not the
+  200-row UI cache), recursively deletes Storage audio, then clears local Rust
+  and browser state before deleting the Auth user/resetting stores.
+
 
 ## Build / distribution
 

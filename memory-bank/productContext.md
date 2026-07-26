@@ -86,3 +86,20 @@ Pages, in sidebar order:
 - No "training" or "voice calibration" screens.
 - No notification spam — toast only on setup errors or sign-out.
 - No in-app advertising, upsell, or social features.
+
+## Trust, privacy, and deletion UX (Session 61)
+
+- Signed-out use is first-class; Firebase sign-in is optional and source builds
+  without complete Firebase config must fail closed to local-only behavior.
+- Privacy copy must distinguish active Speech-to-Text audio transfer from
+  optional raw-WAV retention/upload. Never imply all dictation is local.
+- Account deletion is retryable/idempotent and must delete known Firestore
+  subcollections, profile, Storage audio, Firebase Auth, local WAVs/browser
+  state/GCP metadata/DPAPI key, and next-launch diagnostics without recreating
+  cloud defaults. It never deletes the user's external service-account JSON.
+- Authentication callback UI may say only that a response was received until
+  token exchange and Firebase sign-in actually succeed.
+- No analytics/ads/crash reporter. Operational logs are bounded and must not
+  contain transcript/prompt text or credential material.
+- Installer/uninstaller and Store privacy copy must match actual local/cloud
+  retention. Uninstall alone never deletes cloud data.

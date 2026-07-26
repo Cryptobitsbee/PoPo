@@ -20,8 +20,7 @@ use tauri::AppHandle;
 /// `%LOCALAPPDATA%\popo\uninstall.exe`).
 #[cfg(target_os = "windows")]
 fn uninstaller_path() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("could not locate running exe: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("could not locate running exe: {e}"))?;
     let dir = exe
         .parent()
         .ok_or_else(|| "running exe has no parent directory".to_string())?;
@@ -52,6 +51,19 @@ fn uninstaller_path() -> Result<PathBuf, String> {
 pub async fn cmd_launch_uninstaller(app: AppHandle) -> Result<(), String> {
     let path = uninstaller_path()?;
     tracing::info!("launching uninstaller: {}", path.display());
+
+    // Remove the plugin-managed HKCU Run value before the executable
+    // disappears. The NSIS hook repeats this cleanup for uninstall
+    // flows launched from Start Menu / Installed Apps.
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        if let Err(e) = app.autolaunch().disable() {
+            tracing::warn!("could not disable autostart before uninstall (NSIS will retry): {e}");
+        } else {
+            tracing::info!("autostart disabled before uninstall");
+        }
+    }
 
     // Spawn detached. On Windows NSIS will self-copy to %TEMP% so it
     // survives popo exiting immediately after.

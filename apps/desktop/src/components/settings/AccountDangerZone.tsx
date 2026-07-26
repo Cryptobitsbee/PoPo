@@ -2,7 +2,6 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Warning, Trash } from "@phosphor-icons/react";
 import { deleteUser } from "firebase/auth";
-import { auth } from "../../lib/firebase";
 import { useAuthStore } from "../../store/authStore";
 import { useHistoryStore } from "../../store/historyStore";
 import { useModesStore } from "../../store/modesStore";
@@ -10,14 +9,8 @@ import { useSnippetsStore } from "../../store/snippetsStore";
 import { useDictionaryStore } from "../../store/dictionaryStore";
 import { useAppIconsStore } from "../../store/appIconsStore";
 import { useSettingsStore } from "../../store/settingsStore";
-import {
-  deleteSession,
-  deleteMode,
-  deleteSnippet,
-  deleteDictionaryEntry,
-  deleteAppIcon,
-} from "../../lib/firestore";
-import { trackSync } from "../../store/syncLogStore";
+import { deleteAllCloudUserData } from "../../lib/cloudDeletion";
+import { useSyncLogStore, trackSync } from "../../store/syncLogStore";
 import Button from "../shared/Button";
 import ConfirmDialog from "../shared/ConfirmDialog";
 
@@ -53,60 +46,38 @@ export default function AccountDangerZone() {
     try {
       const uid = user.uid;
 
-      // 1. Firestore: delete every doc the user owns across all
-      //    collections. Order is for auditability only; correctness
-      //    holds either way because all deletes are idempotent.
-      const sessions = useHistoryStore.getState().sessions;
-      for (const s of sessions) {
-        await trackSync("delete", `users/${uid}/sessions/${s.id}`, () =>
-          deleteSession(uid, s.id),
-        );
-      }
-      const modes = useModesStore.getState().modes;
-      for (const m of modes) {
-        await trackSync("delete", `users/${uid}/modes/${m.id}`, () =>
-          deleteMode(uid, m.id),
-        );
-      }
-      const snippets = useSnippetsStore.getState().snippets;
-      for (const sn of snippets) {
-        await trackSync("delete", `users/${uid}/snippets/${sn.id}`, () =>
-          deleteSnippet(uid, sn.id),
-        );
-      }
-      const dict = useDictionaryStore.getState().entries;
-      for (const d of dict) {
-        await trackSync("delete", `users/${uid}/dictionary/${d.id}`, () =>
-          deleteDictionaryEntry(uid, d.id),
-        );
-      }
-      const icons = Object.keys(useAppIconsStore.getState().iconsByName);
-      for (const name of icons) {
-        await trackSync("delete", `users/${uid}/appIcons/${name}`, () =>
-          deleteAppIcon(uid, name),
-        );
-      }
+      // 1. Delete every currently-known remote document and recursively
+      //    remove audio/{uid}/**. This queries Firestore directly rather
+      //    than trusting the UI's 200-session cache.
+      await trackSync("delete", `users/${uid}/**`, () =>
+        deleteAllCloudUserData(uid),
+      );
 
-      // 2. Local Rust: wipe WAVs + runtime caches.
+      // 2. Wipe local Rust-owned data while authentication still exists.
+      //    This removes WAVs, gcp.json, the DPAPI-protected Gemini key,
+      //    first-run state, and runtime caches. It does not delete the
+      //    user's external service-account JSON source file.
       await invoke("cmd_clear_local_user_data");
 
-      // 3. Local stores: reset everything to initial state.
-      useHistoryStore.setState({ sessions: [] });
-      useModesStore.getState().reset();
-      // snippets + dictionary stores don't expose reset(); clear
-      // their arrays directly via setState.
-      useSnippetsStore.setState({ snippets: [] });
-      useDictionaryStore.setState({ entries: [] });
-      useAppIconsStore.getState().clear();
-      useSettingsStore.getState().reset();
+      // 3. Delete Auth. This is intentionally after cloud deletion because
+      //    Firestore and Storage rules require the current UID.
+      await deleteUser(user);
 
-      // 4. Firebase Auth: delete the user account itself.
-      //    This is the irrevocable step — after this, the UID no
-      //    longer exists on Firebase's side. It also implicitly
-      //    signs the user out (onAuthStateChanged fires with null).
-      if (auth?.currentUser) {
-        await deleteUser(auth.currentUser);
-      }
+      // 4. Clear browser-owned state with reset methods that NEVER write to
+      //    Firestore. The previous reset() calls could recreate modes and
+      //    settings immediately after they had been deleted.
+      useHistoryStore.setState({ sessions: [], hydrated: true });
+      useModesStore.getState().resetLocal();
+      useSnippetsStore.getState().reset();
+      useDictionaryStore.getState().reset();
+      useAppIconsStore.getState().clear();
+      useSettingsStore.getState().resetLocal();
+      useSyncLogStore.getState().clear();
+
+      // The Tauri app has a dedicated origin. Clearing it removes one-off
+      // onboarding counters and any legacy PoPo keys not represented by a
+      // current store, while the in-memory stores above remain reset.
+      window.localStorage.clear();
 
       setConfirmOpen(false);
     } catch (e) {

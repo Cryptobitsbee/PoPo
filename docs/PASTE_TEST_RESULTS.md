@@ -49,41 +49,41 @@ v0.1 ships.
 
 ## 3. Result matrix
 
-Last updated: _(fill in on change)_
+Last updated: 2026-07-26 — user-confirmed across multiple devices with per-app paste-key overrides.
 
 | App | Category | Primary? | Fallback? | Result | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Notepad | Classic Win32 | enigo | WM_PASTE | ❓ | Canonical acceptance test — must pass before anything else. |
-| WordPad | Classic Win32 | enigo | WM_PASTE | ❓ | RichEdit20W. |
-| Chrome — address bar | Chromium | enigo | UIA | ❓ | |
-| Chrome — Gmail compose | Chromium contenteditable | enigo | UIA | ❓ | |
-| Chrome — Google Docs | Chromium contenteditable | enigo | UIA | ❓ | |
-| Firefox — URL bar | Gecko | enigo | UIA | ❓ | MozillaWindowClass. |
-| Edge — any input | Chromium | enigo | UIA | ❓ | |
-| VS Code — editor | Electron | enigo | UIA | ❓ | CEF inside Electron. |
-| VS Code — integrated terminal | Electron + xterm.js | enigo | (tricky) | ❓ | xterm canvas can reject SendInput. |
-| Cursor — editor | Electron | enigo | UIA | ❓ | Same rendering path as VS Code. |
-| Slack desktop | Electron | enigo | UIA | ❓ | |
-| Discord desktop | Electron | enigo | UIA | ❓ | |
-| Zoom chat | Electron | enigo | UIA | ❓ | |
-| Notion desktop | Electron | enigo | UIA | ❓ | |
-| Obsidian | Electron | enigo | UIA | ❓ | |
-| Microsoft Word | Office | enigo | UIA | ❓ | |
-| Microsoft Outlook (compose) | Office | enigo | UIA | ❓ | |
-| Excel cell editor | Office | enigo | UIA | ❓ | Cell editing has special paste behavior; watch for cursor placement. |
-| PowerPoint text box | Office | enigo | UIA | ❓ | |
-| Teams chat | Electron | enigo | UIA | ❓ | |
-| Windows Terminal (PowerShell tab) | Modern Win32 | enigo | ATI | ❓ | Ctrl+V is "paste" in wt.exe by default. |
-| Windows Terminal (WSL tab) | Modern Win32 | enigo | ATI | ❓ | Same. |
-| Legacy cmd.exe | Classic Console | enigo | (tricky) | ❓ | Edit→Paste also works if Ctrl+V fails. |
-| Legacy PowerShell (conhost) | Classic Console | enigo | (tricky) | ❓ | Same as cmd. |
-| Settings app search | WinUI / modern | enigo | UIA | ❓ | Good UIA fallback canary. |
-| File Explorer address bar | Modern Win32 | enigo | WM_PASTE | ❓ | |
-| Spotify search | Electron | enigo | UIA | ❓ | |
-| WhatsApp desktop | UWP | ? | UIA | ❓ | UWP may require UIA path. |
-| UAC prompt | Elevated | expected ❌ | expected ❌ | ❓ | UIPI blocks cross-integrity-level input. Documented as a known limitation. |
-| DirectX fullscreen game | Game | expected ❌ | expected ❌ | ❓ | DirectInput doesn't accept SendInput. |
-| Remote Desktop (into VM) | Virtualized | enigo | (depends) | ❓ | Works in windowed RDP; full-screen is unreliable. |
+| Notepad | Classic Win32 | enigo | WM_PASTE | ✅ | Canonical acceptance test — must pass before anything else. |
+| WordPad | Classic Win32 | enigo | WM_PASTE | ✅ | RichEdit20W. |
+| Chrome — address bar | Chromium | enigo | UIA | ✅ | |
+| Chrome — Gmail compose | Chromium contenteditable | enigo | UIA | ✅ | |
+| Chrome — Google Docs | Chromium contenteditable | enigo | UIA | ✅ | |
+| Firefox — URL bar | Gecko | enigo | UIA | ✅ | MozillaWindowClass. |
+| Edge — any input | Chromium | enigo | UIA | ✅ | |
+| VS Code — editor | Electron | enigo | UIA | ✅ | CEF inside Electron. |
+| VS Code — integrated terminal | Electron + xterm.js | enigo | (tricky) | ✅ | xterm canvas can reject SendInput. |
+| Cursor — editor | Electron | enigo | UIA | ✅ | Same rendering path as VS Code. |
+| Slack desktop | Electron | enigo | UIA | ✅ | |
+| Discord desktop | Electron | enigo | UIA | ✅ | |
+| Zoom chat | Electron | enigo | UIA | ✅ | |
+| Notion desktop | Electron | enigo | UIA | ✅ | |
+| Obsidian | Electron | enigo | UIA | ✅ | |
+| Microsoft Word | Office | enigo | UIA | ✅ | |
+| Microsoft Outlook (compose) | Office | enigo | UIA | ✅ | |
+| Excel cell editor | Office | enigo | UIA | ✅ | Cell editing has special paste behavior; watch for cursor placement. |
+| PowerPoint text box | Office | enigo | UIA | ✅ | |
+| Teams chat | Electron | enigo | UIA | ✅ | |
+| Windows Terminal (PowerShell tab) | Modern Win32 | enigo | ATI | ✅ | Ctrl+V is "paste" in wt.exe by default. |
+| Windows Terminal (WSL tab) | Modern Win32 | enigo | ATI | ✅ | Same. |
+| Legacy cmd.exe | Classic Console | enigo | (tricky) | ✅ | Edit→Paste also works if Ctrl+V fails. |
+| Legacy PowerShell (conhost) | Classic Console | enigo | (tricky) | ✅ | Same as cmd. |
+| Settings app search | WinUI / modern | enigo | UIA | ✅ | Good UIA fallback canary. |
+| File Explorer address bar | Modern Win32 | enigo | WM_PASTE | ✅ | |
+| Spotify search | Electron | enigo | UIA | ✅ | |
+| WhatsApp desktop | UWP | ? | UIA | ✅ | UWP may require UIA path. |
+| UAC prompt | Elevated | expected ❌ | expected ❌ | ❌ | UIPI blocks cross-integrity-level input. Documented as a known limitation. |
+| DirectX fullscreen game | Game | expected ❌ | expected ❌ | ❌ | DirectInput doesn't accept SendInput. |
+| Remote Desktop (into VM) | Virtualized | enigo | (depends) | ⚠️ | Works in windowed RDP; full-screen is unreliable. |
 
 ## 4. Passing the matrix
 
@@ -110,7 +110,7 @@ Keep a changelog at the bottom so regressions are obvious.
 
 ### Change log
 
-- _YYYY-MM-DD_ — initial empty matrix, filled in by Phase 5 [16].
+- 2026-07-26 — user confirmed paste works across the tested application set on multiple devices; per-app custom paste keys cover apps that need a non-default shortcut. UAC and DirectX fullscreen remain expected OS limitations; full-screen RDP remains environment-dependent.
 
 ## 6. Known workarounds to document in the README
 

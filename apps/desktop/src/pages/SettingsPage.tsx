@@ -249,7 +249,7 @@ export default function SettingsPage() {
     setUpdateError(null);
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl("https://github.com/ganesshpk/popo/releases");
+      await openUrl("https://github.com/Cryptobitsbee/PoPo/releases");
       // We don't actually know if the user updated — reset to idle.
       setUpdateStatus("idle");
     } catch (e) {
@@ -270,21 +270,10 @@ export default function SettingsPage() {
         setExporting(false);
         return;
       }
-      const { save } = await import("@tauri-apps/plugin-dialog");
       const suggested = `popo-history-${new Date().toISOString().slice(0, 10)}.json`;
-      const path = await save({
-        defaultPath: suggested,
-        filters: [
-          { name: "JSON", extensions: ["json"] },
-          { name: "Text", extensions: ["txt"] },
-        ],
-      });
-      if (!path) {
-        setExporting(false);
-        return; // user cancelled
-      }
-      // Build the export payload. Keep structure flat + self-
-      // documenting so reading it later is easy.
+      // Build both representations before opening the trusted Rust-side
+      // save dialog. Rust chooses the matching contents from the user-
+      // approved .json/.txt extension and performs the write itself.
       const payload = {
         exportedAt: new Date().toISOString(),
         appVersion: "0.1.0",
@@ -302,22 +291,28 @@ export default function SettingsPage() {
           expandedSnippets: s.expandedSnippets,
         })),
       };
-      const isText = path.toLowerCase().endsWith(".txt");
-      const contents = isText
-        ? sessions
-            .map(
-              (s) =>
-                `[${new Date(s.createdAt).toISOString()}] ${s.appName ?? "unknown"} \u2014 ${s.formattedTranscript ?? s.rawTranscript}`,
-            )
-            .join("\n\n")
-        : JSON.stringify(payload, null, 2);
+      const jsonContents = JSON.stringify(payload, null, 2);
+      const textContents = sessions
+        .map(
+          (s) =>
+            `[${new Date(s.createdAt).toISOString()}] ${s.appName ?? "unknown"} \u2014 ${s.formattedTranscript ?? s.rawTranscript}`,
+        )
+        .join("\n\n");
 
-      const bytes = await invoke<number>("cmd_export_history_to_file", {
-        path,
-        contents,
+      const result = await invoke<{
+        bytesWritten: number;
+        path: string;
+      } | null>("cmd_export_history", {
+        jsonContents,
+        textContents,
+        suggestedName: suggested,
       });
-      // eslint-disable-next-line no-console
-      console.info(`[popo] exported ${bytes} bytes to ${path}`);
+      if (result) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[popo] exported ${result.bytesWritten} bytes to ${result.path}`,
+        );
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       alert(`Export failed: ${msg}`);
@@ -506,10 +501,14 @@ export default function SettingsPage() {
           label="Auto-format"
           hint={
             settings.autoFormat
-              ? gcp.geminiApiKey
-                ? "On. Each transcript is polished through Gemini 2.5 Flash-Lite using the active mode's prompt — fixes self-corrections, stutters, and refines tone. Adds ~600-1500 ms to paste."
-                : "On, but no Gemini API key set yet — add one below for full AI formatting. For now, only Chirp's lighter style biasing applies."
-              : "Off. Transcripts paste exactly as spoken — fastest, no AI rewriting at all."
+              ? gcp.geminiProvider === "vertex"
+                ? gcp.serviceAccountJsonPath && gcp.projectId.trim()
+                  ? "On. Each transcript is polished through Gemini 3.5 Flash-Lite on Vertex AI using the active mode's prompt. The selected GCP JSON must remain available."
+                  : "On, but Vertex AI needs a valid GCP service-account path and project ID below."
+                : gcp.geminiApiKey
+                  ? "On. Each transcript is polished through Gemini 3.5 Flash-Lite on AI Studio using the active mode's prompt."
+                  : "On, but no AI Studio API key is set yet. Add one below or switch the provider to Vertex AI."
+              : "Off. Transcripts paste exactly as spoken. Modes, app bindings, mode hotkeys, and Gemini polish are all bypassed."
           }
         >
           <Toggle
@@ -860,5 +859,3 @@ function AccountRow() {
     </SettingRow>
   );
 }
-
-

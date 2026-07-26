@@ -28,6 +28,18 @@ popo-flow.json
 **/*serviceAccount*.json
 
 # ─── Development-only reference / skill folders ───────────────────────
+*.pfx
+*.p12
+*.pvk
+*.p8
+*.jks
+*.keystore
+*.kdbx
+*.snk
+**/signing.properties
+**/keystore.properties
+**/*signing-password*
+
 # These were imported for design research (Sessions 3–4) and contain
 # third-party scripts that trigger CodeQL security alerts. They're
 # NOT application code — popo never executes them. The relevant design

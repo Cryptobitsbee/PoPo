@@ -22,16 +22,19 @@
   settings, and modes follow you to every machine you install popo
   on. Skip it if you don't want Firebase in the mix; popo works just
   as well signed out.
-- 🔒 **Privacy-respecting** — audio is only uploaded while you're
-  dictating, and only if you enable it. No screenshots, ever. Local
-  history stays local unless you turn cloud sync on.
+- 🔒 **Privacy-respecting** — the microphone opens only for an active
+  dictation/test. Speech audio goes directly to the Google Cloud project
+  you configure. Raw WAV retention is off by default; WAVs sync to Firebase
+  only when you enable Store audio and sign in. Signed-out sessions are not
+  uploaded to Firebase.
 
 ## Status
 
-**v0.1 feature-complete** as of Session 25. Shipping gated on the
-`docs/PASTE_TEST_RESULTS.md` matrix populating to ✅ across the
-browser / IDE / Office / Electron buckets. See
-`memory-bank/progress.md` for the live phase checklist.
+**Pre-release.** Core dictation, STT, Gemini, sync, audio, and Quick
+Switcher behavior is implemented. Public distribution remains gated on the
+security/privacy/signing checklist and the paste compatibility matrix. See
+[`docs/RELEASE_SECURITY_CHECKLIST.md`](docs/RELEASE_SECURITY_CHECKLIST.md)
+and `memory-bank/progress.md`.
 
 ---
 
@@ -39,9 +42,10 @@ browser / IDE / Office / Electron buckets. See
 
 ### Download
 
-Grab the latest `popo_0.1.0_x64-setup.exe` from the
-[Releases page](https://github.com/yourorg/popo/releases) _(link
-placeholder — real URL goes here once tagged)_ and run it. The
+When a signed public release is published, obtain it only from the
+[official Releases page](https://github.com/Ganesh540-crypto/PoPo/releases)
+or the verified Microsoft Store listing. Verify the publisher/signature and
+published SHA-256 hash before running a direct-download installer. The
 installer:
 
 - Walks you through a branded wizard (150 × 57 header tile, 164 × 314
@@ -92,8 +96,10 @@ directly from your machine to Google, never through a middleman).
 4. **Step 3 · Create service account** — name it `popo-stt`, grant it
    the `roles/speech.client` role, and generate a JSON key.
 5. **Step 4 · Point popo at your key** — use the **Browse…** button to
-   pick the JSON file you just downloaded. popo copies it to
-   `%APPDATA%\popo\gcp-sa.json`. Enter your project ID.
+   select the JSON file you downloaded. popo stores only that file's
+   path in `%APPDATA%\ai.popo.desktop\gcp.json`; it does not copy the
+   key. Keep the original JSON in place for Speech-to-Text and Vertex
+   AI to remain available. Enter your project ID.
 6. **Step 5 · Test** — popo validates the path + project ID format
    and confirms reachability.
 
@@ -191,9 +197,9 @@ always know exactly what each switch will do in your current state.
 
 1. The transcript is still on your clipboard. Press `Ctrl+V` to
    paste manually.
-2. Check `%APPDATA%\popo\logs\paste.log` for the last attempt. If
-   `method: "enigo"` and `final_outcome: "ok"`, the paste succeeded
-   but the target app may have redirected the keystroke (rare).
+2. Check `%APPDATA%\popo\popo.log` for the latest `paste` result. If
+   the final outcome is successful, the target app may have redirected the
+   keystroke (rare).
 3. Known limitations (see `docs/PASTE_TEST_RESULTS.md`):
    - **UAC prompts** — Windows blocks cross-integrity input. Can't
      work.
@@ -207,10 +213,21 @@ always know exactly what each switch will do in your current state.
 - Settings → Transcription → Language. Change from `auto` to the
   specific language you're speaking. Chirp's auto-detection is very
   good but not perfect.
+- If logs say `locale auto ... is no longer generally available`, you
+  are running a build that still targets Google's preview Mumbai Speech
+  endpoint. Current popo uses the documented GA `eu` multi-region, where
+  Chirp 3 language-agnostic transcription remains available.
 - Check that your mic is correct in Settings → Recording →
   Microphone. The test page is a good way to verify.
 - Silence can look like a cough — the silence-threshold is tuned
   around voice. Very quiet speech may not trigger the active state.
+
+### "Vertex AI returns HTTP 404"
+
+Gemini 3.5 Flash-Lite is available on Vertex at `global`, `us`, and
+`eu`, not single regions such as `us-central1`. Choose **global** in
+Settings → Transcription → Vertex AI. Current popo automatically migrates
+older unsupported region settings to `global`.
 
 ### "Dictation is fake — it's pasting a message about GCP"
 
@@ -223,7 +240,7 @@ GCP Setup and run the wizard.
 It shouldn't — the single-instance plugin guards against this. If it
 happens, check Task Manager and kill both `popo.exe` processes, then
 relaunch from the Start Menu. Open an issue with the log from
-`%APPDATA%\popo\logs\popo.log` so we can look at the sequence of
+`%APPDATA%\popo\popo.log` so we can look at the sequence of
 events around the wake.
 
 ### "The pill is invisible / stuck on top of my Start Menu"
@@ -238,48 +255,59 @@ that area transparent and click-through. If it gets in the way:
 ### "Audio playback in History doesn't work"
 
 You need Settings → Privacy → Store audio enabled for popo to keep
-the raw WAV. Audio files live at `%APPDATA%\popo\audio\{sessionId}.wav`
-(16 kHz PCM-16 mono, ~320 KB per 10 s). If you're signed in with
-cloud sync, they also upload to your Firebase Storage.
+the raw WAV. Audio files live at
+`%APPDATA%\ai.popo.desktop\audio\{sessionId}.wav` (16 kHz PCM-16
+mono, ~320 KB per 10 s). If you're signed in, they also upload to
+your configured Firebase Storage.
 
 ---
 
 ## Privacy & data
 
-popo is designed to be the minimum-trust voice input.
+PoPo is designed to minimize trust and defaults raw-audio retention off.
+See the full [privacy notice](PRIVACY.md), [security policy](SECURITY.md),
+and [source-build configuration guide](docs/OPEN_SOURCE_CONFIGURATION.md).
 
 ### Stays on your machine
 
-- All settings (`%APPDATA%\popo\` + `localStorage`).
-- Local history SQLite (`%APPDATA%\popo\popo.db`).
-- Local audio WAVs (only if Store audio is on).
-- Your GCP service account JSON (`%APPDATA%\popo\gcp-sa.json`).
+- Preferences, modes, snippets, dictionary phrases, app icons, and
+  onboarding state in WebView local storage. The Gemini key is excluded.
+- Optional local WAV files under `%APPDATA%\ai.popo.desktop\audio\`.
+- Your GCP service-account JSON at the path you selected. PoPo stores only
+  its path, project ID, and language in
+  `%APPDATA%\ai.popo.desktop\gcp.json`; moving/deleting the original
+  disables Speech-to-Text and Vertex AI.
+- An AI Studio key, when configured, encrypted for the current Windows
+  user in `gemini-api-key.dpapi` through DPAPI.
+- Bounded operational logs under `%APPDATA%\popo\`. They are designed not
+  to contain transcript/prompt text or credential material; redact before
+  sharing.
 
-### Goes to your Google Cloud (only while you're dictating)
+Signed-out session records are not uploaded and currently remain in memory
+for the running app rather than a local SQLite history database.
 
-- PCM audio chunks (16 kHz mono) streaming to
-  `speech.googleapis.com:443`.
-- Transcripts returned over the same gRPC stream.
+### Goes to your Google services
 
-### Goes to your Firebase (only if you sign in + sync is on)
+- During dictation/test, audio and recognition context go directly to
+  Speech-to-Text in your configured Google Cloud project.
+- If AI formatting is enabled, the transcript and selected prompt go to
+  AI Studio or Vertex AI.
+- If you sign in, Firebase can store your profile, session transcripts,
+  modes/prompts, settings (never GCP credentials), snippets, dictionary,
+  app icons, and diagnostics under `users/{yourUid}`.
+- WAVs go to `audio/{yourUid}/{sessionId}.wav` only when Store audio is on.
 
-- Session records at `users/{yourUid}/sessions/{sessionId}`.
-- Modes at `users/{yourUid}/modes/{modeId}`.
-- Settings (non-GCP fields) at `users/{yourUid}/settings`.
-- Audio WAVs at `audio/{yourUid}/{sessionId}.wav` (only if Store
-  audio is on).
-
-Firestore security rules scope every read/write to
-`request.auth.uid == yourUid`. Nobody else on Firebase can see your
-data.
+Firestore/Storage Rules enforce authenticated UID ownership, bounded
+schemas/object paths, and default deny. Production quotas, API restrictions,
+and monitoring are still required.
 
 ### Never happens
 
-- No screenshots. Ever. `docs/PRODUCT_CONTEXT.md` prohibits them.
-- No telemetry, usage analytics, or crash reports to any popo
-  server — popo has no server.
-- No audio upload when idle. The mic is only open while you're
-  holding the hotkey.
+- No screenshots. `docs/PRODUCT_CONTEXT.md` prohibits them.
+- No product analytics, advertising SDK, third-party crash reporter, or
+  PoPo-operated transcription server.
+- No idle microphone capture. The mic opens only for an active dictation or
+  test.
 
 ---
 
@@ -295,14 +323,14 @@ directly.
 
 Either path launches our NSIS uninstaller, which:
 - Shows a warm popo "Sorry to see you go" prompt first.
-- Asks whether to also delete your local cache (`%APPDATA%\popo` —
-  settings, history, audio). Pick No if you plan to reinstall; your
-  local history survives the reinstall.
-- Removes popo.exe, the pill webview, the tray integration, the
-  autostart registry entry, and (if you agreed) the local cache.
-- **Does not touch cloud data.** Your Firebase-synced sessions,
-  modes, and settings stay under your Google account. Reinstall
-  and sign back in to restore everything.
+- Asks whether to also delete local app data (preferences, optional WAVs,
+  GCP path/project metadata, the DPAPI Gemini key, and diagnostics). The
+  external service-account JSON is never deleted.
+- Removes popo.exe, the pill webview, tray integration, autostart registry
+  entry, and—if selected—the local app-data directories.
+- **Does not touch cloud data.** Use **Settings → Account → Delete all my
+  data** before uninstalling if you also want Firebase records, cloud WAVs,
+  and the Firebase Auth user removed.
 
 ---
 
@@ -410,13 +438,17 @@ Include:
 - Windows version (`winver`).
 - popo version (bottom of sidebar, e.g. `v0.1`).
 - Whether you're signed in.
-- Last 50 lines of `%APPDATA%\popo\logs\popo.log` (NEVER transcripts
-  — the log rotates transcripts out intentionally, but if you see
-  any, redact before posting).
+- Last 50 lines of `%APPDATA%\popo\popo.log`, after reviewing and
+  redacting usernames, paths, app/mode identifiers, or other private data.
+  Logs should not contain transcripts or credentials; if one does, do not
+  post it publicly—report that through `SECURITY.md`.
 - Steps to reproduce, including which target app + text field.
 
 ---
 
 ## License
 
-TBD.
+No license has been selected yet. Until an OSI-approved `LICENSE` is added,
+this repository is source-visible but does not grant open-source reuse rights.
+License selection is a public-release blocker in
+[`docs/RELEASE_SECURITY_CHECKLIST.md`](docs/RELEASE_SECURITY_CHECKLIST.md).

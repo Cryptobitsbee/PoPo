@@ -101,9 +101,25 @@ so you can pick up from any machine later.$\r$\n$\r$\nContinue uninstalling?" \
     IDYES continueUninstall
     Abort "Uninstall cancelled."
   continueUninstall:
+
+  ; Remove every popo autostart value after confirmation and before
+  ; deleting the executable. `popo` is the exact value written by
+  ; tauri-plugin-autostart; the bundle-id variant covers historical
+  ; builds. This also removes stale entries that point at a dev binary.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "popo"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ai.popo.desktop"
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  ; Tauri removes the bundle-id AppData folders when the user selects
+  ; "delete app data". Release diagnostics intentionally live in the
+  ; historical %APPDATA%\popo directory, so remove that directory under
+  ; the same choice (but preserve it during updates or when unchecked).
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    RmDir /r "$APPDATA\popo"
+  ${EndIf}
+
   ; Clean up the "Uninstall popo" shortcut we added in POSTINSTALL.
   ; Tauri's template removes the main shortcut + folder, but might not
   ; know about our extra .lnk. Belt-and-suspenders deletion.
