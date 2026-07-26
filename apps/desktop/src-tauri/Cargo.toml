@@ -96,7 +96,7 @@ base64             = "0.22"
 # backend. No `default-features` so we skip cookies / gzip / brotli
 # that we don't need for a single JSON POST.
 reqwest            = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-miniz_oxide        = "0.8"
+miniz_oxide        = "0.9"
 
 [features]
 # Placeholder — see default features in the brief.
