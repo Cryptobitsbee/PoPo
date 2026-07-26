@@ -42,7 +42,7 @@ tonic      = { version = "0.14", features = ["tls-ring", "tls-native-roots", "tr
 tonic-prost = "0.14"
 prost      = "0.14"
 prost-types = "0.14"
-googleapis-tonic-google-cloud-speech-v2 = "0.34"
+googleapis-tonic-google-cloud-speech-v2 = "0.37"
 gcp_auth   = "0.12"
 hyper      = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
