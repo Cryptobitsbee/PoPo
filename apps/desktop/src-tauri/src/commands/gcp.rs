@@ -179,6 +179,106 @@ pub async fn cmd_gcp_test_connection(state: State<'_, PopoState>) -> Result<GcpT
     }
 }
 
+/// Smoke-test the currently-selected Gemini provider (Settings →
+/// Transcription → Test Gemini connection). Mirrors
+/// `cmd_gcp_test_connection` for Chirp, but routes to whichever Gemini
+/// backend the user picked:
+///   - "aistudio": uses `GCPSettings.geminiApiKey` (pushed via
+///     `cmd_set_gemini_api_key`).
+///   - "vertex":   reuses the GCP service-account OAuth token + project
+///     id (same credential as Chirp), region from `vertex_location`.
+///
+/// Sends a 1-token `generateContent` request and reports the result so
+/// the user knows the provider works before relying on it mid-paste.
+#[tauri::command]
+pub async fn cmd_gemini_test_connection(
+    state: State<'_, PopoState>,
+) -> Result<GcpTestResult, String> {
+    // Snapshot everything out of the mutexes before any await.
+    let provider = {
+        let slot = state
+            .gemini_provider
+            .lock()
+            .map_err(|e| format!("state lock: {e}"))?;
+        slot.clone()
+    };
+
+    if provider == "vertex" {
+        let gcp_snap = {
+            let slot = state.gcp.lock().map_err(|e| format!("state lock: {e}"))?;
+            slot.clone()
+        };
+        let location = {
+            let slot = state
+                .vertex_location
+                .lock()
+                .map_err(|e| format!("state lock: {e}"))?;
+            slot.clone()
+        };
+        let (config, auth) = match gcp_snap {
+            Some((c, a)) if c.is_configured() => (c, a),
+            _ => {
+                return Ok(GcpTestResult {
+                    ok: false,
+                    message: "Vertex needs a GCP service account. Run GCP Setup first.".into(),
+                });
+            }
+        };
+        let token = match auth.access_token().await {
+            Ok(t) => t,
+            Err(e) => {
+                return Ok(GcpTestResult {
+                    ok: false,
+                    message: format!("Could not mint OAuth token: {e}"),
+                });
+            }
+        };
+        let backend = crate::gcp::gemini::GeminiBackend::Vertex {
+            access_token: &token,
+            project_id: &config.project_id,
+            location: &location,
+        };
+        return Ok(match crate::gcp::gemini::test_connection(backend).await {
+            Ok(()) => GcpTestResult {
+                ok: true,
+                message: format!("Vertex AI reachable ({location})."),
+            },
+            Err(e) => GcpTestResult {
+                ok: false,
+                message: format!("{e:#}"),
+            },
+        });
+    }
+
+    // AI Studio path.
+    let api_key = {
+        let slot = state
+            .gemini_api_key
+            .lock()
+            .map_err(|e| format!("state lock: {e}"))?;
+        slot.clone().unwrap_or_default()
+    };
+    if api_key.trim().is_empty() {
+        return Ok(GcpTestResult {
+            ok: false,
+            message: "No AI Studio API key set. Add one above.".into(),
+        });
+    }
+    let backend = crate::gcp::gemini::GeminiBackend::AiStudio {
+        api_key: &api_key,
+    };
+    Ok(match crate::gcp::gemini::test_connection(backend).await {
+        Ok(()) => GcpTestResult {
+            ok: true,
+            message: "AI Studio reachable.".into(),
+        },
+        Err(e) => GcpTestResult {
+            ok: false,
+            message: format!("{e:#}"),
+        },
+    })
+}
+
 // ─── Disk persistence ─────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]

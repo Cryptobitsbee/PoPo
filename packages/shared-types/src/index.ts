@@ -222,6 +222,31 @@ export interface GCPSettings {
    * biasing for partial formatting.
    */
   geminiApiKey: string | null;
+
+  /**
+   * Which Gemini provider to use for polish: "aistudio" (default) or
+   * "vertex". Chosen explicitly here in Settings and committed — popo
+   * never auto-detects the provider on the dictation path, so there's
+   * no per-paste latency cost.
+   *
+   * - "aistudio": uses `geminiApiKey` above (free key from ai.dev).
+   * - "vertex":   reuses the GCP service account already configured for
+   *   Chirp (no separate key). The user must enable the Vertex AI API
+   *   and grant `roles/aiplatform.user` on that service account. AI
+   *   Studio keys are NOT accepted by Vertex, which is why Vertex goes
+   *   through the service-account OAuth instead.
+   *
+   * Machine-local like the rest of GCPSettings — never synced.
+   */
+  geminiProvider: "aistudio" | "vertex";
+
+  /**
+   * Vertex AI region (e.g. "us-central1"). Only used when
+   * `geminiProvider === "vertex"`. The literal "global" targets the
+   * location-agnostic endpoint. Ignored for the AI Studio provider but
+   * preserved so switching back to Vertex restores the last region.
+   */
+  vertexLocation: string;
 }
 
 export const DEFAULT_GCP_SETTINGS: GCPSettings = {
@@ -230,6 +255,8 @@ export const DEFAULT_GCP_SETTINGS: GCPSettings = {
   lastConnectionTest: null,
   lastConnectionOk: null,
   geminiApiKey: null,
+  geminiProvider: "aistudio",
+  vertexLocation: "us-central1",
 };
 
 // ----- Modes & sessions ------------------------------------------------

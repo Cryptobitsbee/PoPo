@@ -67,8 +67,118 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const GEMINI_ENDPOINT: &str =
+/// The Gemini model both providers use. AI Studio addresses it by bare
+/// name; Vertex addresses it as `publishers/google/models/{MODEL_ID}`.
+/// Same weights, same request/response shape — only the URL + auth
+/// header differ between providers.
+const MODEL_ID: &str = "gemini-2.5-flash-lite";
+
+/// AI Studio (Google AI for Developers) endpoint. Auth via the
+/// `x-goog-api-key` header with a key from ai.dev.
+const AISTUDIO_ENDPOINT: &str =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+
+/// Which Gemini provider a call should use. Chosen explicitly in
+/// Settings (NOT auto-detected per dictation) so the real-time paste
+/// path never pays a provider-probe penalty.
+///
+/// **AI Studio** — simple API key, free tier, `generativelanguage.
+/// googleapis.com`. The original popo path.
+///
+/// **Vertex AI** — Google Cloud's enterprise Gemini surface. Reuses
+/// the SAME service-account OAuth token popo already mints for Chirp
+/// (scope `cloud-platform` covers both Speech-to-Text and
+/// aiplatform). No separate key to manage — the user just enables the
+/// Vertex AI API + grants `roles/aiplatform.user` on the service
+/// account they already configured in GCP Setup. AI Studio API keys
+/// are NOT accepted by Vertex, which is why we route through the
+/// service account instead.
+///
+/// Both variants borrow their credentials so the caller owns the
+/// lifetimes (no clone churn on the hot path).
+pub enum GeminiBackend<'a> {
+    AiStudio {
+        api_key: &'a str,
+    },
+    Vertex {
+        /// OAuth2 access token (Bearer) minted from the GCP service
+        /// account via `gcp::auth::Authenticator::access_token`.
+        access_token: &'a str,
+        /// GCP project id (same one used for Chirp).
+        project_id: &'a str,
+        /// Vertex region, e.g. "us-central1". The literal "global"
+        /// targets the location-agnostic `aiplatform.googleapis.com`
+        /// endpoint.
+        location: &'a str,
+    },
+}
+
+impl GeminiBackend<'_> {
+    /// Full `:generateContent` URL for this backend.
+    fn endpoint(&self) -> String {
+        match self {
+            GeminiBackend::AiStudio { .. } => AISTUDIO_ENDPOINT.to_string(),
+            GeminiBackend::Vertex {
+                project_id,
+                location,
+                ..
+            } => {
+                let loc = location.trim();
+                let host = if loc.eq_ignore_ascii_case("global") {
+                    "aiplatform.googleapis.com".to_string()
+                } else {
+                    format!("{loc}-aiplatform.googleapis.com")
+                };
+                format!(
+                    "https://{host}/v1/projects/{project_id}/locations/{loc}/publishers/google/models/{MODEL_ID}:generateContent"
+                )
+            }
+        }
+    }
+
+    /// Attach the right auth header for this backend to a request.
+    fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self {
+            GeminiBackend::AiStudio { api_key } => req.header("x-goog-api-key", *api_key),
+            GeminiBackend::Vertex { access_token, .. } => {
+                req.header("Authorization", format!("Bearer {access_token}"))
+            }
+        }
+    }
+
+    /// Human-readable provider name for logs / errors.
+    fn label(&self) -> &'static str {
+        match self {
+            GeminiBackend::AiStudio { .. } => "AI Studio",
+            GeminiBackend::Vertex { .. } => "Vertex AI",
+        }
+    }
+
+    /// Validate that the backend has the credentials it needs. Returns
+    /// an Err with a user-facing message when something's missing.
+    fn validate(&self) -> Result<()> {
+        match self {
+            GeminiBackend::AiStudio { api_key } => {
+                if api_key.trim().is_empty() {
+                    anyhow::bail!("AI Studio API key is empty");
+                }
+            }
+            GeminiBackend::Vertex {
+                access_token,
+                project_id,
+                ..
+            } => {
+                if access_token.trim().is_empty() {
+                    anyhow::bail!("Vertex access token is empty (GCP service account not configured?)");
+                }
+                if project_id.trim().is_empty() {
+                    anyhow::bail!("Vertex project ID is empty (run GCP Setup first)");
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Maximum wall-clock time for the Gemini round trip. Beyond this, we
 /// give up and let the caller paste the raw Chirp output.
@@ -105,10 +215,28 @@ const GEMINI_TIMEOUT: Duration = Duration::from_millis(12_000);
 /// network, API error, blocked candidate, empty response) returns Err
 /// with a contextual message the caller logs; the caller then pastes
 /// `transcript` verbatim (fail-open).
-pub async fn polish(api_key: &str, system_prompt: &str, transcript: &str) -> Result<String> {
-    if api_key.trim().is_empty() {
-        anyhow::bail!("gemini: API key is empty");
-    }
+/// Polish a Chirp transcript via Gemini 2.5 Flash-Lite on the chosen
+/// provider.
+///
+/// Arguments:
+///   - `backend`       : which provider to call + its credentials
+///                       (`GeminiBackend::AiStudio` or `::Vertex`).
+///                       Caller resolves this from Settings.
+///   - `system_prompt` : the baseline + mode prompt composed by
+///                       `hotkey::resolve_gemini_prompt`. Non-empty.
+///   - `transcript`    : raw transcript from Chirp (non-empty, guaranteed
+///                       by the pre-API amplitude/duration guards).
+///
+/// Returns the polished transcript on success. On any failure (timeout,
+/// network, API error, blocked candidate, empty response) returns Err
+/// with a contextual message the caller logs; the caller then pastes
+/// `transcript` verbatim (fail-open).
+pub async fn polish(
+    backend: GeminiBackend<'_>,
+    system_prompt: &str,
+    transcript: &str,
+) -> Result<String> {
+    backend.validate().context("gemini")?;
     if transcript.trim().is_empty() {
         // Nothing to polish. Caller shouldn't have called us, but
         // return the input unchanged to be defensive.
@@ -166,9 +294,8 @@ pub async fn polish(api_key: &str, system_prompt: &str, transcript: &str) -> Res
         .build()
         .context("gemini: failed to build reqwest client")?;
 
-    let response = client
-        .post(GEMINI_ENDPOINT)
-        .header("x-goog-api-key", api_key)
+    let response = backend
+        .apply_auth(client.post(backend.endpoint()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -214,7 +341,8 @@ pub async fn polish(api_key: &str, system_prompt: &str, transcript: &str) -> Res
 
     let elapsed = started.elapsed().as_millis();
     tracing::info!(
-        "gemini: polished transcript in {}ms ({} chars → {} chars)",
+        "gemini: polished transcript via {} in {}ms ({} chars → {} chars)",
+        backend.label(),
         elapsed,
         transcript.chars().count(),
         trimmed.chars().count()
@@ -238,8 +366,8 @@ pub async fn polish(api_key: &str, system_prompt: &str, transcript: &str) -> Res
 /// Failures (no key, network down, rate-limited) are logged at
 /// debug-level and ignored. Worst case the next user dictation
 /// pays cold-start; the keep-warm just becomes a no-op.
-pub async fn prewarm(api_key: &str) {
-    if api_key.trim().is_empty() {
+pub async fn prewarm(backend: GeminiBackend<'_>) {
+    if backend.validate().is_err() {
         return;
     }
     let body = GenerateContentRequest {
@@ -270,9 +398,9 @@ pub async fn prewarm(api_key: &str) {
         Err(_) => return,
     };
 
-    match client
-        .post(GEMINI_ENDPOINT)
-        .header("x-goog-api-key", api_key)
+    let label = backend.label();
+    match backend
+        .apply_auth(client.post(backend.endpoint()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -280,17 +408,75 @@ pub async fn prewarm(api_key: &str) {
     {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!(
-                "gemini prewarm: warmed in {}ms",
+                "gemini prewarm ({label}): warmed in {}ms",
                 started.elapsed().as_millis()
             );
         }
         Ok(resp) => {
-            tracing::warn!("gemini prewarm: HTTP {}", resp.status());
+            tracing::warn!("gemini prewarm ({label}): HTTP {}", resp.status());
         }
         Err(e) => {
-            tracing::warn!("gemini prewarm: {e}");
+            tracing::warn!("gemini prewarm ({label}): {e}");
         }
     }
+}
+
+/// Smoke-test a Gemini provider for the Settings → Test connection
+/// button. Sends a tiny `generateContent` request and reports whether
+/// it succeeded, with a user-facing message on failure.
+///
+/// This is the Gemini analog of `cmd_gcp_test_connection` for Chirp:
+/// it proves the chosen provider + credentials actually reach a live
+/// model before the user relies on it in the dictation path.
+///
+/// Returns Ok(()) on a 2xx response; Err with the HTTP status + body
+/// (or transport error) otherwise so the UI can show exactly what
+/// went wrong (e.g. "Vertex AI API not enabled", "permission denied").
+pub async fn test_connection(backend: GeminiBackend<'_>) -> Result<()> {
+    backend.validate().context("gemini")?;
+
+    let body = GenerateContentRequest {
+        contents: vec![Content {
+            role: "user",
+            parts: vec![Part {
+                text: "ping".to_string(),
+            }],
+        }],
+        system_instruction: SystemInstruction {
+            parts: vec![Part {
+                text: "Reply with one word.".to_string(),
+            }],
+        },
+        generation_config: GenerationConfig {
+            temperature: 0.0,
+            max_output_tokens: 1,
+            thinking_config: ThinkingConfig { thinking_budget: 0 },
+        },
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(12_000))
+        .build()
+        .context("failed to build reqwest client")?;
+
+    let response = backend
+        .apply_auth(client.post(backend.endpoint()))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .context("request send failed (network?)")?;
+
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+
+    let text = response.text().await.unwrap_or_default();
+    // Keep the message compact for the Settings status row; the full
+    // body is often a multi-line JSON error.
+    let snippet: String = text.chars().take(300).collect();
+    anyhow::bail!("HTTP {status}: {snippet}");
 }
 
 // ── REST body types ─────────────────────────────────────

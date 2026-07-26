@@ -4,6 +4,84 @@
 
 ## Current phase
 
+**SESSION 57 — Selectable Gemini provider: AI Studio vs Vertex AI, chosen explicitly in Settings with a per-provider connection test.**
+
+Why: Google AI Studio's free Gemini API tier tightened limits. Vertex
+AI is the durable path. Rather than auto-detecting which works at
+runtime (adds latency to the real-time paste path), the provider is
+picked + tested in Settings and the whole app commits to it.
+
+Architecture decision (matches user's "same as the Chirp JSON test"
+instruction): **Vertex uses the existing GCP service-account OAuth**,
+not a separate key. AI Studio API keys are NOT accepted by Vertex
+(confirmed via docs); express-mode keys need a separate signup. The
+service account popo already configured for Chirp works for Vertex too
+(scope `cloud-platform` covers `aiplatform.googleapis.com`). User must
+enable the Vertex AI API + grant `roles/aiplatform.user` on that SA.
+
+Vertex endpoint (regional):
+`https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}/locations/{loc}/publishers/google/models/gemini-2.5-flash-lite:generateContent`
+with `Authorization: Bearer {oauth_token}`. `loc == "global"` →
+`aiplatform.googleapis.com/.../locations/global/...`. Request/response
+body is IDENTICAL to AI Studio (contents, systemInstruction,
+generationConfig incl. `thinkingConfig.thinkingBudget: 0`) — only URL
++ auth header differ.
+
+Rust:
+- `gcp/gemini.rs`: new `GeminiBackend<'a>` enum (`AiStudio{api_key}` |
+  `Vertex{access_token, project_id, location}`) with
+  `endpoint()`/`apply_auth()`/`validate()`/`label()` helpers. `polish()`
+  + `prewarm()` now take a `GeminiBackend`. New `test_connection()`
+  sends a 1-token ping and surfaces HTTP status + body on failure.
+- `hotkey/mod.rs` PopoState: `gemini_provider` (default "aistudio") +
+  `vertex_location` (default "us-central1"). `on_release` resolves the
+  provider, snapshots creds out of the mutexes, mints the Vertex OAuth
+  token via the gcp `Authenticator` (async, before the polish await),
+  builds the backend, calls polish. Fail-open unchanged.
+- `commands/settings.rs`: `cmd_set_gemini_provider(provider, location)`
+  (unknown provider → "aistudio").
+- `commands/gcp.rs`: `cmd_gemini_test_connection` — routes to the
+  selected backend and returns `{ok, message}` like the Chirp test.
+- `lib.rs`: `prewarm_gemini_for_state()` helper branches on provider;
+  used by both boot prewarm and the 4-min keep-warm loop. Both new
+  commands registered.
+
+Frontend:
+- shared-types `GCPSettings`: `geminiProvider: "aistudio"|"vertex"`
+  (default aistudio) + `vertexLocation: string` (default us-central1).
+  Machine-local, never synced (same as `geminiApiKey`). hydrate's
+  `{...fallback, ...stored}` merge backfills the new fields for
+  existing users.
+- `useApplySettingsToRust`: debounced `cmd_set_gemini_provider`.
+- `SettingsPage` (Transcription group, under Auto-format): "AI
+  provider" Select; AI Studio → API key row; Vertex → region Input +
+  service-account note; new "Test Gemini connection" row with
+  `GeminiTestStatus` helper (Check/Warning + note, design-system
+  tokens only, no hex/box-shadow). `handleGeminiTest` pushes
+  key+provider then invokes the test command.
+
+Verification: `cargo check` OK; `pnpm typecheck` clean; `pnpm build`
+clean (5067 modules, 1169 KB / 301 KB gz). Runtime verification by the
+user pending: set provider=Vertex, ensure GCP Setup done + Vertex AI
+API enabled + `roles/aiplatform.user`, hit Test connection, then
+dictate with Auto-format on.
+
+Takeaways (PIN):
+- **Vertex AI != AI Studio auth.** AI Studio keys are rejected by
+  Vertex. Reuse the GCP service-account OAuth (scope cloud-platform).
+  The generateContent body is shared; only endpoint + auth header
+  differ — one enum + two helpers covers both.
+- **Pick the provider in Settings, not at runtime.** Auto-probing per
+  dictation would add latency to the paste path. Store the choice,
+  test it explicitly, commit to it.
+- **Mint OAuth tokens before the await, never hold a MutexGuard across
+  it.** Snapshot (config, auth) + location out of PopoState, then
+  `auth.access_token().await`.
+
+---
+
+## Previous phase
+
 **SESSIONS 39–56 — Massive multi-turn sprint covering cross-webview sync, prompts v8–v10, mic capture overhaul, v0.2 feature roadmap, and extensive frontend polish.**
 
 This was a single continuous conversation spanning ~17 logical sessions. Summary of everything that shipped:

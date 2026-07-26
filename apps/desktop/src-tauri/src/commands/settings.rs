@@ -671,6 +671,49 @@ pub fn cmd_set_gemini_api_key(
     Ok(())
 }
 
+/// Set the Gemini provider ("aistudio" or "vertex") + the Vertex
+/// region. Pushed from Settings whenever the user changes the provider
+/// dropdown or the Vertex location field. Unknown provider strings
+/// normalise to "aistudio" so a malformed value can never disable
+/// polish unexpectedly.
+///
+/// Vertex needs no key here — it reuses the GCP service account from
+/// `cmd_set_gcp_config` (same one Chirp uses). `location` is ignored
+/// for the AI Studio provider but always stored so switching back to
+/// Vertex restores the user's last region.
+#[tauri::command]
+pub fn cmd_set_gemini_provider(
+    state: State<'_, PopoState>,
+    provider: String,
+    location: Option<String>,
+) -> Result<(), String> {
+    let normalized = match provider.trim().to_ascii_lowercase().as_str() {
+        "vertex" => "vertex",
+        _ => "aistudio",
+    };
+    {
+        let mut slot = state
+            .inner()
+            .gemini_provider
+            .lock()
+            .map_err(|_| "PopoState gemini_provider mutex poisoned".to_string())?;
+        *slot = normalized.to_string();
+    }
+    if let Some(loc) = location {
+        let trimmed = loc.trim().to_string();
+        if !trimmed.is_empty() {
+            let mut slot = state
+                .inner()
+                .vertex_location
+                .lock()
+                .map_err(|_| "PopoState vertex_location mutex poisoned".to_string())?;
+            *slot = trimmed;
+        }
+    }
+    tracing::info!("cmd_set_gemini_provider: provider={normalized}");
+    Ok(())
+}
+
 /// Replace the full per-app paste override list (Feature 1).
 ///
 /// Called by the frontend whenever Settings → Paste → App-specific

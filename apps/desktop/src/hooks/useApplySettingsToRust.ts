@@ -156,6 +156,11 @@ export function useApplySettingsToRust() {
   // Firestore). Gating happens in Rust on `auto_format_enabled +
   // key_present` — there's no separate smartCleanup toggle anymore.
   const geminiApiKey = useSettingsStore((s) => s.gcp.geminiApiKey);
+  // Gemini provider + Vertex region (machine-local on GCPSettings).
+  // Provider is chosen explicitly in Settings; pushed to Rust so the
+  // dictation path reads it directly (no per-paste auto-detect).
+  const geminiProvider = useSettingsStore((s) => s.gcp.geminiProvider);
+  const vertexLocation = useSettingsStore((s) => s.gcp.vertexLocation);
 
   useDebouncedInvoke("cmd_set_hotkey", { hotkey }, [hotkey]);
   useDebouncedInvoke("cmd_set_mic", { id: micDeviceId ?? null }, [micDeviceId]);
@@ -247,6 +252,17 @@ export function useApplySettingsToRust() {
   useDebouncedInvoke("cmd_set_gemini_api_key", { key: geminiApiKey ?? null }, [
     geminiApiKey ?? "",
   ]);
+
+  // Gemini provider + Vertex region. Pushed together so a provider
+  // switch and a region edit both land. Defaults applied defensively.
+  useDebouncedInvoke(
+    "cmd_set_gemini_provider",
+    {
+      provider: geminiProvider ?? "aistudio",
+      location: vertexLocation ?? "us-central1",
+    },
+    [geminiProvider ?? "aistudio", vertexLocation ?? "us-central1"],
+  );
 }
 
 /**

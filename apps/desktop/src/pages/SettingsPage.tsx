@@ -17,6 +17,7 @@ import { useModesStore } from "../store/modesStore";
 import SettingsGroup from "../components/settings/SettingsGroup";
 import SettingRow from "../components/settings/SettingRow";
 import GCPSetup from "../components/settings/GCPSetup";
+import GeminiSetup from "../components/settings/GeminiSetup";
 import CloudHint from "../components/settings/CloudHint";
 import PasteOverridesEditor from "../components/settings/PasteOverridesEditor";
 import AccountDangerZone from "../components/settings/AccountDangerZone";
@@ -25,7 +26,6 @@ import Select from "../components/shared/Select";
 import SegmentedControl from "../components/shared/SegmentedControl";
 import HotkeyInput from "../components/shared/HotkeyInput";
 import Button from "../components/shared/Button";
-import Input from "../components/shared/Input";
 import MultiSelect from "../components/shared/MultiSelect";
 
 /**
@@ -184,7 +184,6 @@ export default function SettingsPage() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const gcp = useSettingsStore((s) => s.gcp);
-  const updateGcp = useSettingsStore((s) => s.updateGcp);
   const modes = useModesStore((s) => s.modes);
 
   // Real mic list from cpal via Rust. Loaded on mount; refreshed when
@@ -553,56 +552,11 @@ export default function SettingsPage() {
           />
         </SettingRow>
 
-        {/* Gemini API key — Session 35.
-            Merged the old Smart cleanup toggle into Auto-format above:
-            one master switch, no redundant settings. When auto-format
-            is on AND a key is configured, transcripts polish through
-            Gemini 2.5 Flash-Lite using the active mode's prompt
-            (~600-1500 ms). Without a key, only Chirp's custom_prompt
-            biasing applies. */}
-        {settings.autoFormat && (
-          <SettingRow
-            label="Gemini API key"
-            hint={
-              <>
-                Required for AI formatting. Get a free key at{" "}
-                <a
-                  href="#"
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const { openUrl } =
-                        await import("@tauri-apps/plugin-opener");
-                      await openUrl("https://aistudio.google.com/app/apikey");
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  style={{
-                    color: "var(--text-primary)",
-                    textDecoration: "underline",
-                    cursor: "pointer",
-                  }}
-                >
-                  ai.dev
-                </a>
-                . Stored locally — never synced.
-              </>
-            }
-            last
-          >
-            <Input
-              type="password"
-              value={gcp.geminiApiKey ?? ""}
-              onChange={(e) => updateGcp({ geminiApiKey: e.target.value })}
-              placeholder="AIza…"
-              monospace
-              style={{ minWidth: 240 }}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </SettingRow>
-        )}
+        {/* AI provider (AI Studio vs Vertex AI) + key/region + a
+            single connection test. Lives in its own component so the
+            rows stay tidy and the Vertex setup guide has a home. */}
+        {settings.autoFormat && <GeminiSetup />}
+
 
         {/*
           Phase C spoken-punctuation / spoken-emoji / profanity-filter
@@ -906,3 +860,5 @@ function AccountRow() {
     </SettingRow>
   );
 }
+
+

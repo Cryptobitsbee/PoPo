@@ -44,6 +44,56 @@ use crate::commands::audio as audio_cmds;
 use crate::commands::gcp as gcp_cmds;
 use crate::commands::oauth as oauth_cmds;
 use crate::commands::settings as settings_cmds;
+
+/// Prewarm whichever Gemini provider the user selected. Branches on
+/// `PopoState.gemini_provider`:
+///   - "vertex": mints an OAuth token from the GCP service account
+///     (same one Chirp uses) and warms the Vertex endpoint.
+///   - "aistudio" (default): warms the AI Studio endpoint with the
+///     stored API key.
+/// No-op when the chosen provider's credentials aren't configured.
+/// Shared by the boot prewarm + the 4-minute keep-warm loop.
+async fn prewarm_gemini_for_state(state: &crate::hotkey::PopoState) {
+    let provider = state
+        .gemini_provider
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "aistudio".to_string());
+
+    if provider == "vertex" {
+        let gcp_snap = state.gcp.lock().ok().and_then(|g| g.clone());
+        let location = state
+            .vertex_location
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "us-central1".to_string());
+        if let Some((config, auth)) = gcp_snap {
+            if config.is_configured() {
+                if let Ok(token) = auth.access_token().await {
+                    crate::gcp::gemini::prewarm(crate::gcp::gemini::GeminiBackend::Vertex {
+                        access_token: &token,
+                        project_id: &config.project_id,
+                        location: &location,
+                    })
+                    .await;
+                }
+            }
+        }
+    } else {
+        let key = state
+            .gemini_api_key
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_default();
+        if !key.trim().is_empty() {
+            crate::gcp::gemini::prewarm(crate::gcp::gemini::GeminiBackend::AiStudio {
+                api_key: &key,
+            })
+            .await;
+        }
+    }
+}
 use crate::commands::system as system_cmds;
 use crate::commands::test as test_cmds;
 use crate::commands::test::TestRecordingState;
@@ -86,6 +136,7 @@ pub fn run() {
             gcp_cmds::cmd_set_gcp_config,
             gcp_cmds::cmd_get_gcp_config,
             gcp_cmds::cmd_gcp_test_connection,
+            gcp_cmds::cmd_gemini_test_connection,
             gcp_cmds::cmd_update_language,
             oauth_cmds::cmd_start_oauth_listener,
             oauth_cmds::cmd_open_oauth_url,
@@ -118,6 +169,7 @@ pub fn run() {
             // Gemini 2.5 Flash-Lite polish (Session 34, simplified Session 35)
             // Session 35: cmd_set_smart_cleanup removed; auto_format gates Gemini.
             settings_cmds::cmd_set_gemini_api_key,
+            settings_cmds::cmd_set_gemini_provider,
             // Running-apps enumeration for AppPicker UIs
             crate::commands::apps::cmd_list_running_apps,
             // Export + account management
@@ -263,18 +315,10 @@ pub fn run() {
                 // Initial Gemini prewarm. Same idea — warm the TLS
                 // connection + serving worker so the first user
                 // dictation's smart-cleanup pass doesn't pay
-                // cold-start latency. Skipped silently when no API
-                // key is configured.
-                let key = state
-                    .inner()
-                    .gemini_api_key
-                    .lock()
-                    .ok()
-                    .and_then(|g| g.clone())
-                    .unwrap_or_default();
-                if !key.is_empty() {
-                    crate::gcp::gemini::prewarm(&key).await;
-                }
+                // cold-start latency. Branches on the selected
+                // provider (AI Studio key vs Vertex service-account
+                // token); no-op when credentials aren't set.
+                prewarm_gemini_for_state(state.inner()).await;
             });
 
             // --- Periodic keep-warm task ---------------------
@@ -319,17 +363,18 @@ pub fn run() {
                         crate::gcp::client::prewarm_streaming(&auth, &config.project_id).await;
                     }
 
-                    // Gemini: just needs the API key.
-                    let key = state
-                        .inner()
-                        .gemini_api_key
-                        .lock()
-                        .ok()
-                        .and_then(|g| g.clone())
-                        .unwrap_or_default();
-                    if !key.is_empty() {
-                        tracing::info!("keep-warm: re-prewarming Gemini");
-                        crate::gcp::gemini::prewarm(&key).await;
+                    // Gemini: branch on the selected provider. The
+                    // helper mints a Vertex OAuth token when needed,
+                    // or uses the AI Studio key. No-op when unset.
+                    {
+                        let provider = state
+                            .inner()
+                            .gemini_provider
+                            .lock()
+                            .map(|g| g.clone())
+                            .unwrap_or_else(|_| "aistudio".to_string());
+                        tracing::info!("keep-warm: re-prewarming Gemini ({provider})");
+                        prewarm_gemini_for_state(state.inner()).await;
                     }
                 }
             });

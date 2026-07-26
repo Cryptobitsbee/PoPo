@@ -300,6 +300,14 @@ pub struct PopoState {
     /// otherwise we skip polish (Chirp output passes through, with
     /// its own custom_prompt biasing if auto_format is on).
     pub gemini_api_key: Mutex<Option<String>>,
+    /// Which Gemini provider to use: "aistudio" (default) or "vertex".
+    /// Chosen explicitly in Settings; resolved once per dictation in
+    /// `on_release` — never auto-detected on the hot path.
+    pub gemini_provider: Mutex<String>,
+    /// Vertex AI region (e.g. "us-central1"). Only consulted when
+    /// `gemini_provider == "vertex"`. Vertex reuses the GCP service
+    /// account already in `gcp` for its OAuth token + project id.
+    pub vertex_location: Mutex<String>,
 }
 
 /// Rust-side representation of a Snippet. Mirrors
@@ -417,6 +425,8 @@ impl Default for PopoState {
             pending_forced_mode_id: Mutex::new(None),
             switcher_caller_hwnd: Mutex::new(None),
             gemini_api_key: Mutex::new(None),
+            gemini_provider: Mutex::new("aistudio".to_string()),
+            vertex_location: Mutex::new("us-central1".to_string()),
         }
     }
 }
@@ -2556,29 +2566,86 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             .lock()
             .map(|g| *g)
             .unwrap_or(false);
-        let api_key_present = st
-            .inner()
-            .gemini_api_key
-            .lock()
-            .map(|g| g.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
-            .unwrap_or(false);
         let sys_prompt = effective_prompt_for_guard.clone();
 
-        if auto_on
-            && api_key_present
-            && !used_fake
-            && !transcript.trim().is_empty()
-            && !sys_prompt.trim().is_empty()
+        // Which provider? "aistudio" (default) or "vertex". Resolved
+        // here once — never auto-detected mid-paste.
+        let provider = st
+            .inner()
+            .gemini_provider
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "aistudio".to_string());
+
+        // Resolve owned credentials for the chosen provider. Snapshot
+        // everything out from under the mutexes BEFORE any await
+        // (minting a Vertex token is async), and never hold a guard
+        // across the network call.
+        enum OwnedCreds {
+            AiStudio(String),
+            Vertex {
+                token: String,
+                project: String,
+                location: String,
+            },
+        }
+
+        let creds: Option<OwnedCreds> = if !auto_on
+            || used_fake
+            || transcript.trim().is_empty()
+            || sys_prompt.trim().is_empty()
         {
-            // Snapshot the key out from under the lock before await.
-            let api_key = st
+            None
+        } else if provider == "vertex" {
+            // Vertex reuses the GCP service account already configured
+            // for Chirp. Snapshot (config, auth) then mint a token.
+            let gcp_snap = st.inner().gcp.lock().ok().and_then(|g| g.clone());
+            let location = st
+                .inner()
+                .vertex_location
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "us-central1".to_string());
+            match gcp_snap {
+                Some((config, auth)) if config.is_configured() => {
+                    match auth.access_token().await {
+                        Ok(token) => Some(OwnedCreds::Vertex {
+                            token,
+                            project: config.project_id.clone(),
+                            location,
+                        }),
+                        Err(e) => {
+                            tracing::warn!(
+                                "gemini(vertex): could not mint OAuth token ({e:#}); pasting raw"
+                            );
+                            None
+                        }
+                    }
+                }
+                _ => {
+                    tracing::warn!(
+                        "gemini(vertex): GCP service account not configured; pasting raw"
+                    );
+                    None
+                }
+            }
+        } else {
+            // AI Studio path.
+            let key = st
                 .inner()
                 .gemini_api_key
                 .lock()
                 .ok()
                 .and_then(|g| g.clone())
                 .unwrap_or_default();
+            if key.trim().is_empty() {
+                None
+            } else {
+                Some(OwnedCreds::AiStudio(key))
+            }
+        };
 
+        if let Some(creds) = creds {
             // Reinforce the output contract so Gemini never prepends
             // "Here's the cleaned transcript:" or similar chatter.
             let gemini_system = format!(
@@ -2587,7 +2654,20 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
                  no quotes around the output."
             );
 
-            match gcp::gemini::polish(&api_key, &gemini_system, &transcript).await {
+            let backend = match &creds {
+                OwnedCreds::AiStudio(key) => gcp::gemini::GeminiBackend::AiStudio { api_key: key },
+                OwnedCreds::Vertex {
+                    token,
+                    project,
+                    location,
+                } => gcp::gemini::GeminiBackend::Vertex {
+                    access_token: token,
+                    project_id: project,
+                    location,
+                },
+            };
+
+            match gcp::gemini::polish(backend, &gemini_system, &transcript).await {
                 Ok(polished) => {
                     tracing::info!("gemini: smart-cleanup applied");
                     polished
@@ -2601,8 +2681,9 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             }
         } else {
             // Smart cleanup not applicable — either the toggle is off,
-            // the API key isn't set, we're on the fake-transcribe path,
-            // or there's no prompt / transcript. Skip silently.
+            // the provider's credentials aren't set, we're on the
+            // fake-transcribe path, or there's no prompt / transcript.
+            // Skip silently.
             transcript
         }
     };
