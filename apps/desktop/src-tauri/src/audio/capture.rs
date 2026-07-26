@@ -45,11 +45,12 @@
 // tooltips when nothing was captured.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+use super::mic_error::{classify_stream_error, MicCaptureError, MicErrorKind};
 
 /// Hard cap on the ring buffer. 3 minutes at 48 kHz mono = 8_640_000
 /// samples × 4 bytes = ~34 MB per active recording. This covers the
@@ -106,16 +107,9 @@ pub struct CaptureHandle {
     /// diagnostics only — all callers see mono samples (we pick the
     /// strongest channel per callback).
     pub channels: u16,
-    /// Human-readable device name as cpal reported it. Surfaced into
-    /// pill error messages when a recording produces silent audio so
-    /// the user can tell at a glance which device popo was capturing
-    /// from.
-    pub device_name: String,
     /// Live diagnostic counters updated by every audio callback.
     /// Read by `on_release` when a recording is rejected for low
-    /// amplitude, so the user gets a specific error ("max signal:
-    /// 0.0008 from Microphone Array") instead of a generic "no
-    /// speech detected." Also useful for live debugging.
+    /// amplitude or the stream reports a terminal device failure.
     pub diag: Arc<CaptureDiagnostics>,
 }
 
@@ -143,6 +137,10 @@ pub struct CaptureDiagnostics {
     /// Highest |sample| observed after fixed input boost. Kept under
     /// the old field name to preserve the existing diagnostic API.
     pub peak_post_agc_bits: AtomicU32,
+    /// Last terminal CPAL stream error category. Zero means the callback
+    /// has not reported a stream failure. This survives until release so
+    /// an unplug during recording is not misreported as generic silence.
+    stream_error_kind: AtomicU8,
 }
 
 impl CaptureDiagnostics {
@@ -152,6 +150,7 @@ impl CaptureDiagnostics {
             samples_written: AtomicU64::new(0),
             peak_pre_agc_bits: AtomicU32::new(0),
             peak_post_agc_bits: AtomicU32::new(0),
+            stream_error_kind: AtomicU8::new(0),
         })
     }
 
@@ -163,6 +162,14 @@ impl CaptureDiagnostics {
     /// Read the current post-input-boost peak as f32.
     pub fn peak_post_agc(&self) -> f32 {
         f32::from_bits(self.peak_post_agc_bits.load(Ordering::Relaxed))
+    }
+
+    pub fn stream_error_kind(&self) -> Option<MicErrorKind> {
+        MicErrorKind::from_u8(self.stream_error_kind.load(Ordering::Relaxed))
+    }
+
+    fn record_stream_error(&self, kind: MicErrorKind) {
+        self.stream_error_kind.store(kind as u8, Ordering::Relaxed);
     }
 }
 
@@ -210,52 +217,41 @@ unsafe impl Sync for SafeStream {}
 /// This avoids both failure modes seen on Windows laptop mic arrays:
 /// averaging voice with silent/reference channels, and assuming voice
 /// always arrives on channel 0.
-pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
+pub fn start(preferred_name: Option<&str>) -> std::result::Result<CaptureHandle, MicCaptureError> {
     let host = cpal::default_host();
 
-    // Resolve the device: explicit pick first, then default.
+    // Resolve the device. An explicit user selection is authoritative: if it
+    // disappeared, fail as unplugged rather than silently capturing a different
+    // default microphone.
     let device = match preferred_name {
         Some(target) if !target.is_empty() => {
+            let devices = host.input_devices().map_err(MicCaptureError::from)?;
             let mut found = None;
-            match host.input_devices() {
-                Ok(iter) => {
-                    for dev in iter {
-                        if let Ok(name) = dev.name() {
-                            if name == target {
-                                tracing::info!("cpal input: using user-selected device {name:?}");
-                                found = Some(dev);
-                                break;
-                            }
-                        }
+            let mut name_unavailable = false;
+            for candidate in devices {
+                match candidate.name() {
+                    Ok(name) if name == target => {
+                        found = Some(candidate);
+                        break;
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "cpal input_devices() failed while searching for {target:?}: {e}"
-                    );
+                    Ok(_) => {}
+                    Err(_) => name_unavailable = true,
                 }
             }
             match found {
-                Some(d) => d,
-                None => {
-                    tracing::warn!(
-                        "user-selected mic {target:?} not found; falling back to default"
-                    );
-                    host.default_input_device()
-                        .ok_or_else(|| anyhow!("no default input device available"))?
-                }
+                Some(device) => device,
+                None if name_unavailable => return Err(MicCaptureError::device_name_unavailable()),
+                None => return Err(MicCaptureError::no_input_device()),
             }
         }
         _ => host
             .default_input_device()
-            .ok_or_else(|| anyhow!("no default input device available"))?,
+            .ok_or_else(MicCaptureError::no_input_device)?,
     };
-
-    let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
 
     let supported = device
         .default_input_config()
-        .context("failed to get default input config")?;
+        .map_err(MicCaptureError::from)?;
 
     let default_sample_format = supported.sample_format();
     let sample_rate = supported.sample_rate().0;
@@ -263,7 +259,7 @@ pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
     let stream_config: cpal::StreamConfig = supported.into();
 
     tracing::info!(
-        "cpal input: device={device_name} sr={sample_rate}Hz channels={channels} default_format={default_sample_format:?} buffer={:?}",
+        "cpal input: sr={sample_rate}Hz channels={channels} default_format={default_sample_format:?} buffer={:?}",
         stream_config.buffer_size
     );
 
@@ -280,46 +276,49 @@ pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
     // We support EVERY cpal SampleFormat to avoid silent failures on
     // unusual Windows devices (some 24-bit-in-i32 mic arrays show up
     // as I32, some studio interfaces show up as F64, etc.).
-    let fallback_to_native = || {
-        Ok(match default_sample_format {
-            // ── Floating-point formats (already in [-1, 1] range) ────
+    let fallback_to_native = || -> std::result::Result<cpal::Stream, MicCaptureError> {
+        match default_sample_format {
+            // Floating-point formats (already in [-1, 1] range).
             cpal::SampleFormat::F32 => {
-                build_input_f32(&device, &stream_config, &samples, &diag, ch)?
+                build_input_f32(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
             cpal::SampleFormat::F64 => {
-                build_input_f64(&device, &stream_config, &samples, &diag, ch)?
+                build_input_f64(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
-
-            // ── Signed integer formats (zero-centred) ─────────────────
-            cpal::SampleFormat::I8 => build_input_i8(&device, &stream_config, &samples, &diag, ch)?,
+            // Signed integer formats (zero-centred).
+            cpal::SampleFormat::I8 => build_input_i8(&device, &stream_config, &samples, &diag, ch)
+                .map_err(MicCaptureError::from),
             cpal::SampleFormat::I16 => {
-                build_input_i16(&device, &stream_config, &samples, &diag, ch)?
+                build_input_i16(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
             cpal::SampleFormat::I32 => {
-                build_input_i32(&device, &stream_config, &samples, &diag, ch)?
+                build_input_i32(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
             cpal::SampleFormat::I64 => {
-                build_input_i64(&device, &stream_config, &samples, &diag, ch)?
+                build_input_i64(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
-
-            // ── Unsigned integer formats (origin = midpoint) ──────────
-            cpal::SampleFormat::U8 => build_input_u8(&device, &stream_config, &samples, &diag, ch)?,
+            // Unsigned integer formats (origin = midpoint).
+            cpal::SampleFormat::U8 => build_input_u8(&device, &stream_config, &samples, &diag, ch)
+                .map_err(MicCaptureError::from),
             cpal::SampleFormat::U16 => {
-                build_input_u16(&device, &stream_config, &samples, &diag, ch)?
+                build_input_u16(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
             cpal::SampleFormat::U32 => {
-                build_input_u32(&device, &stream_config, &samples, &diag, ch)?
+                build_input_u32(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
             cpal::SampleFormat::U64 => {
-                build_input_u64(&device, &stream_config, &samples, &diag, ch)?
+                build_input_u64(&device, &stream_config, &samples, &diag, ch)
+                    .map_err(MicCaptureError::from)
             }
-
-            other => {
-                return Err(anyhow!(
-                "unsupported cpal sample format: {other:?} (this should not happen on Windows WASAPI)"
-            ));
-            }
-        })
+            other => Err(MicCaptureError::unsupported_sample_format(other)),
+        }
     };
 
     // Prefer a float stream on WASAPI when available. Browser
@@ -338,23 +337,24 @@ pub fn start(preferred_name: Option<&str>) -> Result<CaptureHandle> {
                 );
                 stream
             }
-            Err(e) => {
-                tracing::warn!(
-                    "cpal input: f32 shared-mode capture unsupported ({e:#}); falling back to {default_sample_format:?}"
+            Err(cpal::BuildStreamError::StreamConfigNotSupported)
+            | Err(cpal::BuildStreamError::InvalidArgument) => {
+                tracing::info!(
+                    "cpal input: f32 shared-mode format unsupported; falling back to {default_sample_format:?}"
                 );
                 fallback_to_native()?
             }
+            Err(error) => return Err(MicCaptureError::from(error)),
         }
     };
 
-    stream.play().context("failed to start input stream")?;
+    stream.play().map_err(MicCaptureError::from)?;
 
     Ok(CaptureHandle {
         stream: SafeStream(stream),
         samples,
         sample_rate,
         channels,
-        device_name,
         diag,
     })
 }
@@ -377,9 +377,10 @@ macro_rules! build_input_impl {
             samples: &Arc<Mutex<VecDeque<f32>>>,
             diag: &Arc<CaptureDiagnostics>,
             ch: usize,
-        ) -> Result<cpal::Stream> {
+        ) -> std::result::Result<cpal::Stream, cpal::BuildStreamError> {
             let buf = samples.clone();
             let diag_cb = diag.clone();
+            let diag_error = diag.clone();
             let ch_for_callback = ch.max(1);
             let stream = device.build_input_stream(
                 cfg,
@@ -480,7 +481,7 @@ macro_rules! build_input_impl {
                         );
                     }
                 },
-                on_stream_error,
+                move |error| on_stream_error(&diag_error, error),
                 None,
             )?;
             Ok(stream)
@@ -520,6 +521,8 @@ fn push_cap(buf: &mut VecDeque<f32>, sample: f32) {
     buf.push_back(sample);
 }
 
-fn on_stream_error(err: cpal::StreamError) {
-    tracing::error!("cpal input stream error: {err}");
+fn on_stream_error(diag: &CaptureDiagnostics, error: cpal::StreamError) {
+    let kind = classify_stream_error(&error);
+    diag.record_stream_error(kind);
+    tracing::error!("cpal input stream failed: {}", kind.code());
 }

@@ -99,8 +99,10 @@ use crate::commands::test as test_cmds;
 use crate::commands::test::TestRecordingState;
 
 /// Custom Tauri commands are otherwise globally invokable by every webview.
-/// Keep the narrow switcher surface explicit and deny the pill all custom IPC;
-/// plugin/core capabilities remain governed by the capability JSON files.
+/// Keep each auxiliary webview's surface explicit. The pill gets exactly one
+/// no-argument command that opens a compile-time Windows settings URI; unknown
+/// labels remain fully denied. Plugin/core capabilities are still governed by
+/// the capability JSON files.
 fn custom_command_allowed(window_label: &str, command: &str) -> bool {
     match window_label {
         "main" => true,
@@ -108,6 +110,7 @@ fn custom_command_allowed(window_label: &str, command: &str) -> bool {
             command,
             "cmd_set_mode_bindings" | "cmd_set_auto_format_prompt" | "cmd_hide_mode_switcher"
         ),
+        "pill" => command == "cmd_open_mic_settings",
         _ => false,
     }
 }
@@ -219,6 +222,7 @@ pub fn run() {
                 test_cmds::cmd_test_dictate_start,
                 test_cmds::cmd_test_dictate_stop,
                 system_cmds::cmd_launch_uninstaller,
+                system_cmds::cmd_open_mic_settings,
             ];
             command_handler(invoke)
         })
@@ -746,8 +750,16 @@ mod ipc_origin_tests {
     }
 
     #[test]
-    fn pill_and_unknown_webviews_have_no_custom_command_access() {
+    fn pill_has_only_the_fixed_microphone_settings_action() {
+        assert!(custom_command_allowed("pill", "cmd_open_mic_settings"));
         assert!(!custom_command_allowed("pill", "cmd_get_gcp_config"));
+        assert!(!custom_command_allowed("pill", "cmd_open_oauth_url"));
+        assert!(!custom_command_allowed("pill", "cmd_launch_uninstaller"));
+    }
+
+    #[test]
+    fn unknown_webviews_have_no_custom_command_access() {
+        assert!(!custom_command_allowed("unknown", "cmd_open_mic_settings"));
         assert!(!custom_command_allowed("unknown", "cmd_list_running_apps"));
     }
 }

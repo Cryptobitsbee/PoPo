@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:build:store": "tauri build --bundles nsis --config src-tauri/tauri.store.conf.json",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

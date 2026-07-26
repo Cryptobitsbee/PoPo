@@ -1030,85 +1030,73 @@ on each row. Click toggles `pinned`.
 
 ## #18 Better mic error messages
 
-**Status**: Not started
+**Status**: Shipped (Session 62)
 **Tier**: 3 · **Effort**: 1 day · **Phase**: Reliability
 
-### What
+### What shipped
 
-Replace generic "no audio detected" / "mic error" with specific,
-actionable messages:
+Generic microphone failures now resolve to stable, actionable categories:
 
 | Detected condition | Message + action |
 |---|---|
-| Mic unplugged | "Microphone unplugged — plug in or pick another in Settings." |
-| Mic in use by another app | "Mic in use by Zoom — close it or use a different mic." |
-| Permission blocked | "Mic blocked by Windows. **[Open settings]**" |
-| Device name unknown | "Mic error — restart the app or pick a different mic." |
+| Selected/default mic missing or disconnected | "Microphone unplugged. Plug it in or pick another in Settings." |
+| WASAPI endpoint busy/exclusive-blocked | "Microphone is in use by another app. Close it or pick another in Settings." |
+| Windows access denied | "Microphone blocked by Windows. Open settings"; clicking or pressing Enter/Space opens the fixed Windows microphone privacy panel. |
+| Unsupported stream configuration | "Microphone configuration is not supported. Pick another in Settings." |
+| Device name/backend unknown | "Microphone error. Restart popo or pick another in Settings." |
+| Stream opens but emits no callbacks | "No audio reached popo. Check Windows microphone access or pick another mic." plus the same fixed settings action. |
+| Audio arrives below the speech threshold | "No speech detected. Unmute your microphone or pick another in Settings." |
 
-### Why
+An explicit selected microphone is authoritative. If it disappears, popo reports
+it as unavailable instead of silently recording from a different default device.
 
-A vague error makes users feel the tool is broken. A specific error
-with a one-click fix makes them feel the tool is helpful even when
-something's wrong. This is a major satisfaction lever for negligible
-effort.
-
-### Files
+### Implementation
 
 **Rust**:
-- `apps/desktop/src-tauri/src/audio/capture.rs` — categorize cpal
-  errors by inspecting the error variant + try probing
-  `IMMDeviceEnumerator` for explanation
-- `apps/desktop/src-tauri/src/focus/mod.rs` — new helper
-  `open_mic_settings_panel()` → launches `ms-settings:privacy-microphone`
-- `apps/desktop/src-tauri/src/lib.rs` — register `cmd_open_mic_settings`
+- `audio/mic_error.rs` owns `MicErrorKind` and maps every CPAL
+  enumeration/default-config/build/play/runtime variant. Known WASAPI HRESULTs
+  are classified without exposing raw backend details.
+- `audio/capture.rs` preserves concrete CPAL errors, records asynchronous stream
+  failure categories in `CaptureDiagnostics`, and no longer stores/logs device
+  names for error reporting.
+- `hotkey/mod.rs` emits closed, stable error payloads and prioritizes a recorded
+  runtime disconnect over the short-recording guard.
+- `commands/system.rs` opens only the compile-time constant
+  `ms-settings:privacy-microphone` through the existing Tauri opener plugin.
+- `lib.rs` permits `pill` exactly `cmd_open_mic_settings`; all other custom
+  commands remain denied, with regression tests for pill and unknown labels.
 
 **Frontend**:
-- `apps/desktop/src/components/pill/ErrorTooltip.tsx` — already exists;
-  extend payload type to include optional `action` field
-- `apps/desktop/src-tauri/src/hotkey/mod.rs` — emit specific error
-  payloads in the various failure paths
-- Pill clicks the action button → invokes the right command
+- `PillErrorPayload` has an optional closed `openMicSettings` action. No URL or
+  command string crosses the event boundary.
+- `ErrorTooltip` keeps the action inline so the fixed 260×110 pill window does
+  not resize. It supports click, Enter, Space, `aria-busy`, retry feedback, and
+  keeps actionable errors persistent until handled.
 
-### Data model
+### Classification decision
 
-Extend the existing `ErrorPayload`:
-```rust
-pub struct ErrorPayload {
-    pub code: String,
-    pub message: String,
-    pub action: Option<ErrorAction>, // NEW
-}
-
-pub enum ErrorAction {
-    OpenMicSettings,
-    OpenAppSettings { tab: String },
-    Retry,
-}
-```
-
-### Algorithm
-
-In `audio::capture::start`, categorize errors:
-
-- `cpal::DeviceNameError` → "Mic error" + retry action
-- `cpal::DefaultStreamConfigError::DeviceNotAvailable` → "Mic
-  unplugged"
-- `cpal::BuildStreamError::DeviceNotAvailable` → same as above
-- `cpal::BuildStreamError::StreamConfigNotSupported` → "Mic
-  config error — pick a different mic"
-- Probe Win32 to see if the device exists at all but is in use:
-  `IAudioClient::Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE)` returning
-  `AUDCLNT_E_ALREADY_INITIALIZED` → "Mic in use by another app"
-- Permission denied (Win11 mic privacy) → check
-  `MicrophoneAccessSettings` via `windows-rs`
+PoPo does **not** preflight WASAPI exclusive mode to guess which app owns a mic.
+That probe can fail while normal shared-mode capture is healthy and would create
+false "mic in use" errors for working devices. The classifier instead trusts the
+CPAL operation that actually failed and passively recognizes
+`AUDCLNT_E_DEVICE_IN_USE`, `AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED`, and
+`E_ACCESSDENIED` when WASAPI returns them.
 
 ### Validation
 
-- Unplug USB mic → press hotkey → correct error.
-- Open Voice Recorder, start recording, then press popo hotkey →
-  "Mic in use" message.
-- Toggle Win11 mic permission off → press hotkey → "blocked by
-  Windows" + open-settings button works.
+Automated in Session 62:
+- 28 Rust tests pass, including CPAL variants, permission/busy HRESULTs,
+  backend-detail non-disclosure, payload serialization, and IPC origin gates.
+- Rust release check and formatting pass.
+- Frontend typecheck/production build pass (5,073 modules).
+- Tauri configuration/capabilities parse and an independent focused reviewer
+  returned `APPROVED` with no blocking finding.
+
+Manual hardware/OS matrix still required before a signed release:
+- unplug a selected USB microphone;
+- hold an endpoint exclusively in another application/driver;
+- disable Windows desktop microphone access and activate **Open settings**;
+- exercise unsupported/muted/no-callback devices where available.
 
 ### Dependencies
 

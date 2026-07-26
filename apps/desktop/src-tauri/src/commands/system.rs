@@ -12,7 +12,28 @@
 
 use std::path::PathBuf;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
+
+const MICROPHONE_SETTINGS_URI: &str = "ms-settings:privacy-microphone";
+
+fn mic_settings_allowed_window(label: &str) -> bool {
+    matches!(label, "main" | "pill")
+}
+
+/// Open the Windows microphone privacy panel. The frontend supplies no URL;
+/// this command can launch only the compile-time constant above. Pill access
+/// is intentional and limited to this single command by the central IPC gate.
+#[tauri::command]
+pub fn cmd_open_mic_settings(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    if !mic_settings_allowed_window(window.label()) {
+        return Err("microphone settings can be opened only from a PoPo window".into());
+    }
+
+    app.opener()
+        .open_url(MICROPHONE_SETTINGS_URI, None::<&str>)
+        .map_err(|_| "Windows microphone settings could not be opened".to_string())
+}
 
 /// Return the path to the NSIS uninstaller. Tauri's NSIS template
 /// writes `uninstall.exe` next to the main binary inside `$INSTDIR`
@@ -100,4 +121,17 @@ pub async fn cmd_launch_uninstaller(app: AppHandle) -> Result<(), String> {
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mic_settings_allowed_window;
+
+    #[test]
+    fn microphone_settings_action_is_limited_to_popo_windows() {
+        assert!(mic_settings_allowed_window("main"));
+        assert!(mic_settings_allowed_window("pill"));
+        assert!(!mic_settings_allowed_window("switcher"));
+        assert!(!mic_settings_allowed_window("unknown"));
+    }
 }

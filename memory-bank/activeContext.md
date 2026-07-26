@@ -4,6 +4,52 @@
 
 ## Current phase
 
+**SESSION 62 — Actionable microphone errors (#18).**
+
+Baseline handoff:
+- Session 61 was committed as `e0c63fa` (`Harden security and release
+  readiness`) and pushed to `origin/session-61-security-hardening`; local and
+  remote hashes matched. GitHub redirected the old `Ganesh540-crypto/PoPo`
+  remote to `Cryptobitsbee/PoPo`.
+- Current implementation work is on local branch `feature/better-mic-errors`
+  and is not committed or pushed.
+
+Completed implementation:
+- Added `audio/mic_error.rs` with stable unplugged, in-use,
+  permission-blocked, unsupported-config, and unknown categories across every
+  CPAL enumeration/default-config/build/play/runtime variant.
+- Passively classifies known WASAPI HRESULTs. No exclusive-mode probe is used:
+  such a probe can fail while shared capture works and would create false busy
+  errors.
+- Explicit selected microphones now fail as unavailable when missing rather
+  than silently switching to the system default.
+- Runtime stream failures persist atomically in `CaptureDiagnostics` so an
+  unplug during recording is not mislabeled as silence/short input.
+- Removed microphone names and raw backend details from capture error logs and
+  pill payloads. The Test page receives the same fixed user copy.
+- Extended `PillErrorPayload` with a closed `openMicSettings` action. The pill
+  receives exactly one custom command, `cmd_open_mic_settings`; it takes no URL
+  and opens only the compile-time Windows microphone privacy URI.
+- `ErrorTooltip` keeps the action inline within the fixed 260×110 host and
+  supports click, Enter/Space, persistent state, `aria-busy`, and retry copy.
+- Updated `docs/ROADMAP.md` #18 and the event/IPC architecture invariant.
+
+Validation evidence:
+- 28 Rust tests pass, including CPAL variants, WASAPI permission/busy HRESULTs,
+  no raw-detail leakage, payload serialization, and pill/unknown IPC gates.
+- Rust release check passes; frontend typecheck/production build passes with
+  5,073 modules; Tauri config/capabilities parse. The existing project-local
+  Tauri watcher rebuilt `target/debug/popo.exe` after the final Rust edits and
+  restarted it successfully; the process remained alive.
+- Independent focused reviewer returned `APPROVED` with no blocking finding.
+- Manual unplug/exclusive-owner/Windows-permission/muted-device tests remain a
+  real-hardware release matrix, not an automated claim.
+
+Next: #5 audio recovery after crash. Preserve the Session 61 security
+boundaries while adding recovery persistence and startup UX.
+
+### Previous session context
+
 **SESSION 61 — Security, privacy, open-source configuration, and Windows release trust hardening.**
 
 Completed implementation:
@@ -76,7 +122,8 @@ Owner/manual release actions still required:
    sign/timestamp, verify, Defender-scan, hash, and publish only reviewed
    artifacts. See the release checklist.
 
-No commit was created. The large Sessions 58–60 working tree remains preserved.
+Session 61 was subsequently committed and pushed as `e0c63fa` on
+`session-61-security-hardening`. Sessions 58–60 remained preserved.
 
 ### Previous session context
 

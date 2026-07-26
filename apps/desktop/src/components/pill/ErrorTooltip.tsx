@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { Warning, Info } from "@phosphor-icons/react";
@@ -19,11 +20,12 @@ import { usePillStore } from "../../store/pillStore";
  *   - TRANSIENT variants (`persistent !== true`) fade out after 10
  *     seconds. Used for paste / transcribe / network errors.
  *   - PERSISTENT variants (`persistent === true`) stay visible until
- *     the user clicks the tooltip. Used for blocking status notices
- *     like "GCP not configured" where the tooltip is the ONLY cue
- *     telling the user why the hotkey isn't producing transcripts.
- *   - Clicking any tooltip dismisses it early.
- *   - Subsequent errors swap the content and reset any timer.
+ *     the user activates/dismisses the tooltip. Used for blocking status
+ *     notices and actionable microphone-permission failures.
+ *   - A reviewed `action` turns the compact tooltip into a keyboard-operable
+ *     control. Rust sends a closed action kind, never a URL/command string.
+ *   - Clicking a tooltip without an action dismisses it early.
+ *   - Subsequent errors swap the content and reset any timer/action state.
  */
 
 const DISMISS_MS = 10_000;
@@ -33,6 +35,33 @@ export default function ErrorTooltip() {
   const clearError = usePillStore((s) => s.clearError);
   const [visible, setVisible] = useState(false);
   const [frozen, setFrozen] = useState<typeof error>(undefined);
+  const [actionPending, setActionPending] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
+
+  const dismiss = () => {
+    setVisible(false);
+    window.setTimeout(() => clearError(), 300);
+  };
+
+  const activate = async () => {
+    if (!frozen?.action) {
+      dismiss();
+      return;
+    }
+    if (actionPending) return;
+
+    setActionPending(true);
+    setActionFailed(false);
+    try {
+      if (frozen.action.kind === "openMicSettings") {
+        await invoke("cmd_open_mic_settings");
+      }
+      dismiss();
+    } catch {
+      setActionPending(false);
+      setActionFailed(true);
+    }
+  };
 
   // Each new error resets visibility. Transient variants start a
   // 10-second auto-dismiss timer; persistent variants stay until the
@@ -42,6 +71,8 @@ export default function ErrorTooltip() {
     if (!error) return;
     setFrozen(error);
     setVisible(true);
+    setActionPending(false);
+    setActionFailed(false);
     if (error.persistent) {
       // No auto-dismiss. User clicks tooltip or Rust re-emits to
       // replace / clear.
@@ -70,15 +101,22 @@ export default function ErrorTooltip() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.25, ease: [0.25, 1, 0.5, 1] }}
-          onClick={() => {
-            setVisible(false);
-            // Wipe the store after the fade so a manually-dismissed
-            // transient error cannot leave the main pill stuck in the
-            // red error state.
-            window.setTimeout(() => clearError(), 300);
+          onClick={() => void activate()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              void activate();
+            }
           }}
-          role={isInfo ? "status" : "alert"}
+          role={frozen.action ? "button" : isInfo ? "status" : "alert"}
+          tabIndex={frozen.action ? 0 : undefined}
           aria-live={isInfo ? "polite" : "assertive"}
+          aria-label={
+            frozen.action
+              ? `${frozen.message} ${frozen.action.label}`
+              : undefined
+          }
+          aria-busy={actionPending || undefined}
           style={{
             display: "flex",
             alignItems: "flex-start",
@@ -133,6 +171,23 @@ export default function ErrorTooltip() {
             }}
           >
             {frozen.message || frozen.code || "Unknown error"}
+            {frozen.action ? (
+              <span
+                style={{
+                  color: actionFailed
+                    ? "var(--accent-error)"
+                    : "var(--text-secondary)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {" · "}
+                {actionFailed
+                  ? "Could not open settings. Try again"
+                  : actionPending
+                    ? "Opening settings"
+                    : frozen.action.label}
+              </span>
+            ) : null}
           </span>
         </motion.div>
       ) : null}

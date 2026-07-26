@@ -15,6 +15,13 @@ export type PillState =
   | "success"
   | "error";
 
+export type PillErrorAction = {
+  /** Open the fixed Windows microphone privacy panel. */
+  kind: "openMicSettings";
+  /** Concise action copy rendered inside the tooltip. */
+  label: string;
+};
+
 export interface PillErrorPayload {
   code: string;
   message: string;
@@ -35,6 +42,11 @@ export interface PillErrorPayload {
    * auto-dismisses after ~10s.
    */
   persistent?: boolean;
+  /**
+   * Optional reviewed action. Rust sends a closed kind plus label; it never
+   * sends an arbitrary URL or Tauri command for the pill to execute.
+   */
+  action?: PillErrorAction;
 }
 
 export interface PillWaveformPayload {

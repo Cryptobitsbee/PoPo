@@ -15,7 +15,7 @@ Do **not** open a public issue, discussion, or pull request for a vulnerability.
 
 Use GitHub's private vulnerability reporting for this repository:
 
-<https://github.com/Ganesh540-crypto/PoPo/security/advisories/new>
+<https://github.com/Cryptobitsbee/PoPo/security/advisories/new>
 
 If private reporting is unavailable, contact the repository owner through the contact method published on the owner's GitHub profile. Do not send API keys, service-account JSON, access tokens, private audio, or real transcripts. Use synthetic examples and redact usernames and local paths.
 

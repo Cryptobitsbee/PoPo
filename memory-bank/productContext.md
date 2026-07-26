@@ -100,6 +100,11 @@ Pages, in sidebar order:
 - Authentication callback UI may say only that a response was received until
   token exchange and Firebase sign-in actually succeed.
 - No analytics/ads/crash reporter. Operational logs are bounded and must not
-  contain transcript/prompt text or credential material.
+  contain transcript/prompt text, microphone names, raw backend errors, or
+  credential material.
+- Microphone failures must distinguish unplugged, busy, blocked, unsupported,
+  no-callback, and muted/quiet cases without guessing which app owns a device.
+  Windows-permission guidance offers one fixed, keyboard-operable settings
+  action while keeping the pill compact and non-focus-stealing.
 - Installer/uninstaller and Store privacy copy must match actual local/cloud
   retention. Uninstall alone never deletes cloud data.

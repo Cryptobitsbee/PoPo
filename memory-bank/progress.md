@@ -129,6 +129,28 @@
 
 ## Pending / Polish
 
+## Session 62 — Actionable microphone errors (#18)
+
+- [x] Structured every CPAL microphone-open/runtime error into stable unplugged,
+  in-use, permission, unsupported-config, or unknown categories.
+- [x] Recognize WASAPI access-denied/device-in-use HRESULTs without unreliable
+  exclusive-mode preflight probes.
+- [x] Explicit missing selected devices fail closed instead of silently using a
+  different default microphone.
+- [x] Runtime stream failures survive in capture diagnostics until release;
+  no-callback and low-signal cases have distinct copy.
+- [x] Raw backend errors and microphone names are excluded from pill payloads
+  and release logs.
+- [x] Permission/no-callback tooltips expose one fixed **Open settings** action;
+  the pill can invoke only `cmd_open_mic_settings`, whose URI is compile-time.
+- [x] Action is inline, keyboard-operable, persistent, and fits the fixed pill
+  host without dynamic resize.
+- [x] Validation: 28 Rust tests, release check/format, frontend typecheck/build,
+  Tauri config parse, diff hygiene, and independent review pass.
+- [ ] Manual release matrix: unplugged USB mic, truly exclusive endpoint,
+  Windows desktop-mic permission off, muted/no-callback, and unsupported config.
+- [ ] Next: #5 audio recovery after crash.
+
 ## Session 61 — Security and release-readiness hardening
 
 - [x] Desktop OAuth now uses system browser + PKCE S256 + random state +
@@ -177,10 +199,10 @@
 - [ ] Next batch: current-release closeout (runtime switcher visual/interaction
   smoke, stale-doc reconciliation, dead pending-switcher Rust cleanup, fresh
   release installer build and smoke test).
-- [ ] Then complete continuously: #18 mic errors → #5 crash recovery → #10
-  vocabulary + #17 usage telemetry + #15 stats → #2 voice commands → #1
-  transforms → #3 context-aware dictation + #6 continue thought → production
-  updater/signing/Windows validation and later offline fallback.
+- [ ] Continue continuously: #5 crash recovery → #10 vocabulary + #17 usage
+  telemetry + #15 stats → #2 voice commands → #1 transforms → #3
+  context-aware dictation + #6 continue thought → production updater/signing/
+  Windows validation and later offline fallback.
 
 ## Session 59 — Runtime locale, Vertex location, and disabled-mode UX
 
