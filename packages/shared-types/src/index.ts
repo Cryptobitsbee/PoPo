@@ -71,7 +71,7 @@ export interface Settings {
   /**
    * Master AI-formatting switch. When ON AND `GCPSettings.geminiApiKey`
    * is configured, every Chirp transcript is polished through
-   * Gemini 2.5 Flash-Lite using the active mode's system prompt
+   * Gemini 3.5 Flash-Lite using the active mode's system prompt
    * (Code preserves technical terms, Email structures it as a
    * proper email, etc.). Adds ~600-1500 ms latency per dictation.
    *
@@ -203,7 +203,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 /** GCP credentials + project metadata. Configured via Settings → GCP Setup. */
 export interface GCPSettings {
-  /** Absolute path on disk. Stored at %APPDATA%\popo\gcp-sa.json; displayed here. */
+  /** Absolute path to the user-selected JSON. The original file remains authoritative and is never copied by popo. */
   serviceAccountJsonPath: string | null;
   projectId: string;
   /** Timestamp (epoch ms) of the last Test Connection click. */
@@ -213,7 +213,7 @@ export interface GCPSettings {
   /**
    * Google AI Studio API key (separate from the GCP service account).
    * When set AND `Settings.autoFormat` is on, transcripts are polished
-   * through Gemini 2.5 Flash-Lite using the active mode's prompt.
+   * through Gemini 3.5 Flash-Lite using the active mode's prompt.
    * Get one free at ai.dev. Stored locally on this machine only —
    * never synced to Firestore (each machine configures its own).
    *
@@ -241,7 +241,7 @@ export interface GCPSettings {
   geminiProvider: "aistudio" | "vertex";
 
   /**
-   * Vertex AI region (e.g. "us-central1"). Only used when
+   * Vertex AI location (`global`, `us`, or `eu`). Only used when
    * `geminiProvider === "vertex"`. The literal "global" targets the
    * location-agnostic endpoint. Ignored for the AI Studio provider but
    * preserved so switching back to Vertex restores the last region.
@@ -256,7 +256,7 @@ export const DEFAULT_GCP_SETTINGS: GCPSettings = {
   lastConnectionOk: null,
   geminiApiKey: null,
   geminiProvider: "aistudio",
-  vertexLocation: "us-central1",
+  vertexLocation: "global",
 };
 
 // ----- Modes & sessions ------------------------------------------------
@@ -376,7 +376,9 @@ export interface Session {
   rawTranscript: string;
   formattedTranscript?: string;
   audioStoragePath?: string;
-  /** Firebase Storage download URL — cross-device audio playback. */
+  /** Firebase Storage object path resolved on demand with the signed-in SDK. */
+  audioCloudPath?: string;
+  /** Legacy bearer download URL retained only for pre-hardening sessions. */
   audioDownloadUrl?: string;
   gcpCostEstimate?: number;
   /**

@@ -79,15 +79,20 @@ export async function saveSession(
   session: Session,
 ): Promise<void> {
   if (!db) return;
-  // Strip `appIcon` before writing. Icons are stored once per app in
-  // the `users/{uid}/appIcons` collection to avoid duplicating the
-  // same ~5 KB PNG on every session doc. `appName` stays on the
-  // session so the dedup key survives cross-device sync; the icon
-  // itself is resolved at render time from `appIconsStore`.
-  const { appIcon: _appIcon, ...sessionWithoutIcon } = session;
+  // Strip machine-local and bearer-capability fields before writing.
+  // Icons are stored once per app, local WAV paths can reveal Windows
+  // usernames and are meaningless on other devices, and legacy Firebase
+  // download URLs must not be copied into new documents. New cloud audio
+  // persists only its owner-scoped Storage object path.
+  const {
+    appIcon: _appIcon,
+    audioStoragePath: _audioStoragePath,
+    audioDownloadUrl: _audioDownloadUrl,
+    ...sessionForCloud
+  } = session;
   const ref = doc(sessionsCol(uid), session.id);
   await setDoc(ref, {
-    ...sessionWithoutIcon,
+    ...sessionForCloud,
     // serverTimestamp is a sentinel value that Firestore resolves to
     // the actual server timestamp — avoids client clock drift.
     _serverCreatedAt: serverTimestamp(),

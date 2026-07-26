@@ -7,13 +7,12 @@
 │  Rust (src-tauri) — the daemon                               │
 │                                                              │
 │  cpal audio capture ─┐                                       │
-│                      ├─► resample (rubato) ─► tonic gRPC ──► GCP STT v2
+│                      ├─► hand-rolled resample ─► tonic gRPC ─► GCP STT v2
 │  global-shortcut ────┤                                     Chirp 3 streaming
 │                      │                                       │
 │  windows-rs focus ───┤                                       ▼
 │  arboard clipboard ──┤                                   transcript
-│  enigo paste ────────┤                                       │
-│  rusqlite local db ──┘                                       ▼
+│  enigo paste ────────┘                                       │
 │                                                       (optional) Gemini Flash
 │  Tauri events ──► React (main window + pill window)          │
 └──────────────────────────────────────────────────────────────┘
@@ -21,9 +20,11 @@
 
 ## Process model
 
-- **One Tauri binary**, two webview windows:
-  - `pill` — always created at boot, transparent, 340×80, never focusable.
-  - `main` — created at boot with `visible: false`, shown on tray click.
+- **One Tauri binary**, three webview windows:
+  - `pill` — always created at boot, 300×180 transparent host with a much
+    smaller visible pill, never focusable.
+  - `main` — 1080×680, created hidden and shown from tray/first run.
+  - `switcher` — 360×300 transparent Quick Switcher, hidden until invoked.
 - System tray icon owns the lifecycle: Open popo / Quit.
 - Global hotkey is registered once in `main.rs` via
   `tauri-plugin-global-shortcut`, not re-registered per session.
@@ -63,6 +64,21 @@ All pill state lives in Rust. React only listens and renders.
 - `pill:state:sleep`       — payload `{}`
 - `pill:state:ready`       — payload `{}`
 - `pill:state:active`      — payload `{}` (sent once; active is driven by waveform events)
+
+### Security routing invariant (Session 61)
+
+- `pill:*` events go only to `pill`.
+- `oauth:callback`, `session:created`, snippet bookkeeping, and `test:*` go
+  only to `main`; never broadcast authorization codes or transcripts.
+- Cross-webview store-change notifications are the only intentionally shared
+  frontend events.
+- Capability JSON restricts plugin/core APIs, and `custom_command_allowed()`
+  independently gates all registered app commands: `main` may call app
+  commands; `switcher` may call only mode-binding, prompt, and hide commands;
+  `pill`/unknown labels may call none.
+- Every new custom command or event must update this origin model and tests.
+
+
 - `pill:state:processing`  — payload `{}`
 - `pill:state:success`     — payload `{}`
 - `pill:state:error`       — payload `{ code: string, message: string }`
@@ -164,3 +180,53 @@ which is an animation detail inside the single motion.div).
 - gRPC recv stream task consumes recognition events, emits pill events.
 - Paste task runs on a dedicated blocking task (`tokio::task::spawn_blocking`)
   because enigo + Win32 calls are synchronous.
+
+## Session 58 reliability boundaries
+
+- **Auto-format is a true master gate.** Resolve it before forced/default/app mode selection; mode prompts and mode-specific sounds must not leak through when off.
+- **Selected credential files remain authoritative.** Caching parsed key material or OAuth tokens is allowed for performance, but every credential use must first verify the original configured path still exists as a regular file. Never imply that popo copied a key when it only persisted path metadata.
+- **One provider seam.** AI Studio and Vertex share request/response logic through `GeminiBackend`; every test, prewarm, keep-warm, and dictation call must resolve the same persisted provider selection.
+- **Model upgrades include payload migration.** Moving to Gemini 3.5 required removing deprecated sampling fields and the 2.5-only thinking budget, not only changing the model string.
+- **Development builds must never mutate OS autostart.** Otherwise a source-tree debug executable survives installed-app uninstall and launches a console/pill later. Uninstall cleanup must exist both in-app (plugin disable) and in NSIS (Run-value deletion).
+
+
+## Session 59 reliability boundaries
+
+- A model ID and a cloud location are one compatibility contract. Before
+  changing a model, verify its product-specific location table; Gemini 3.5
+  Flash-Lite Vertex calls must use `global`, `us`, or `eu`. Normalize stale
+  persisted locations both at the IPC boundary and URL builder.
+- Do not keep a latency-optimized preview Speech endpoint after Google removes
+  feature availability. Chirp 3 production traffic uses a documented GA
+  multi-region (`eu` here); `language_codes=["auto"]` remains the official
+  language-agnostic request there.
+- A disabled master feature must also disable its selector UX. Retaining a
+  saved preference is fine, but do not show an active marker or emit selection
+  commands while the master switch is off.
+
+## Session 61 security and data-lifecycle boundaries
+
+- Firebase client config and desktop OAuth client IDs are public identifiers,
+  never authorization secrets. Source builds use separate projects or no
+  Firebase; backend defense is Auth + Rules + quotas/API restrictions.
+- OAuth uses a validated Google endpoint, PKCE S256, independent random state,
+  random IPv4 loopback port, bounded/time-limited reads, exact callback state,
+  and no client secret.
+- Gemini AI Studio keys are transient in frontend memory and persist only via
+  Windows current-user DPAPI. Initial `null` must never erase the protected key
+  before secure hydration completes.
+- Audio/export custom IPC never accepts an unconstrained filesystem primitive:
+  audio paths canonicalize under app audio storage and native export selects
+  the destination itself.
+- New Firestore session writes strip `audioStoragePath`, `audioDownloadUrl`,
+  and inline app icons. Cloud playback resolves `audioCloudPath` through the
+  authenticated SDK.
+- Any future Firestore user subcollection must be added simultaneously to
+  `firestore.rules`, `cloudDeletion.ts`, privacy inventory, and tests.
+- Account deletion performs cloud documents + Storage while authenticated,
+  local Rust data/DPAPI/browser data, then Auth deletion and non-syncing store
+  resets. Uninstall local-data choice removes bundle AppData and separate logs;
+  uninstall alone does not remove cloud data.
+- Release logs rotate at 5 MiB with one predecessor and must never include
+  transcript/prompt content, tokens, API keys, service-account contents, or
+  bearer URLs. Account deletion schedules guaranteed next-start log removal.

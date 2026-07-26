@@ -30,7 +30,7 @@ service that:
 - Focus capture + restore + auto-paste (enigo Ctrl+V with fallback chain)
 - Clipboard save-and-restore around every paste
 - System tray (Open popo / Quit)
-- SQLite local history + Firestore sync (best-effort)
+- In-memory signed-out session history + optional owner-scoped Firestore sync
 - Firebase Auth (Google Sign-In)
 - History + Settings pages (basic)
 - GCP setup wizard
@@ -65,3 +65,24 @@ service that:
    Firefox, VS Code, Cursor, Slack, Discord, Word, Notepad.
 3. Pill never steals focus; clipboard is always restored.
 4. All four paste fallback methods implemented and documented.
+
+## Security and release trust baseline (Session 61)
+
+- Official releases use the publisher's production Firebase identifiers;
+  source/fork builds use isolated projects or no Firebase configuration.
+- Firebase web config and desktop OAuth client IDs are public identifiers.
+  OAuth secrets, service-account JSON, Gemini keys, and signing keys must never
+  be embedded, committed, logged, or placed in `VITE_*` variables.
+- Desktop OAuth is system-browser authorization code + PKCE S256 + random state
+  + random-port IPv4 loopback. OAuth/session/test events are routed only to the
+  intended webview; custom Tauri commands are centrally origin-gated.
+- Gemini AI Studio keys persist only through current-user Windows DPAPI.
+  GCP service-account JSON stays external; PoPo persists only its path/project
+  metadata and verifies the source remains a regular file before use.
+- Raw WAV retention remains off by default. New cloud records store an
+  authenticated Storage object path, not a durable bearer download URL or
+  machine-local WAV path.
+- Public release is blocked until an OSI license, publisher legal/privacy
+  contact, deployed/tested Firebase Rules, owner-run deletion/OAuth smoke tests,
+  and Microsoft Store or consistently timestamped Authenticode signing exist.
+  See `docs/RELEASE_SECURITY_CHECKLIST.md`.

@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::hotkey::PopoState;
 
@@ -34,11 +34,9 @@ use crate::hotkey::PopoState;
 ///
 ///   2. **GCP config.** Clears `PopoState.gcp` so subsequent
 ///      dictations fall back to the `fake_transcribe` setup hint.
-///      The on-disk JSON (`%APPDATA%\\popo\\gcp-sa.json`) is NOT
-///      removed \u2014 users often want to keep their service account
-///      key around even after a Firebase sign-out. If they truly
-///      want it gone they can delete it via Windows Explorer; the
-///      GCP Setup wizard in Settings flags its presence clearly.
+///      The persisted `%APPDATA%\\ai.popo.desktop\\gcp.json` contains
+///      only the selected source path/project/language. popo never copies
+///      or deletes the external service-account JSON.
 ///
 ///   3. **First-run marker.** Removed so the next launch shows the
 ///      welcome overlay again (fresh-install UX).
@@ -56,8 +54,12 @@ use crate::hotkey::PopoState;
 #[tauri::command]
 pub async fn cmd_clear_local_user_data(
     app: AppHandle,
+    window: WebviewWindow,
     state: State<'_, PopoState>,
 ) -> Result<u64, String> {
+    if window.label() != "main" {
+        return Err("local user-data erasure is available only from the main window".into());
+    }
     let mut deleted_audio: u64 = 0;
 
     // 1. Audio cache.
@@ -83,10 +85,17 @@ pub async fn cmd_clear_local_user_data(
         tracing::warn!("cmd_clear_local_user_data: couldn't resolve audio dir");
     }
 
-    // 2. GCP config in PopoState.
+    // 2. GCP/Gemini config in PopoState and on disk. The external
+    // service-account JSON selected by the user is never touched.
     if let Ok(mut guard) = state.inner().gcp.lock() {
         *guard = None;
     }
+    if let Ok(mut guard) = state.inner().gemini_api_key.lock() {
+        *guard = None;
+    }
+    crate::commands::gcp::delete_persisted_gcp_config(&app)?;
+    crate::commands::secrets::delete_gemini_api_key(&app)?;
+    schedule_release_log_cleanup();
 
     // 3. First-run marker.
     if let Ok(marker) = first_run_marker_path(&app) {
@@ -111,7 +120,7 @@ pub async fn cmd_clear_local_user_data(
     }
 
     tracing::info!(
-        "cmd_clear_local_user_data: wiped {} audio file(s) + GCP config + runtime caches",
+        "cmd_clear_local_user_data: wiped {} audio file(s) + GCP metadata + protected Gemini key + runtime caches",
         deleted_audio
     );
     Ok(deleted_audio)
@@ -138,4 +147,26 @@ fn first_run_marker_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|e| format!("app_data_dir failed: {e}"))?;
     Ok(base.join(".installed"))
+}
+
+/// Release diagnostics are written before Tauri resolves `app_data_dir`, under
+/// `%APPDATA%\popo`. Best-effort truncate the active file now, remove its
+/// rotated predecessor, and leave a marker that `main::init_tracing` consumes
+/// before opening the logger on the next launch. Log cleanup must not make an
+/// otherwise-successful account deletion fail because Windows may hold the
+/// active writer open.
+fn schedule_release_log_cleanup() {
+    let Ok(app_data) = std::env::var("APPDATA") else {
+        return;
+    };
+    let log_dir = PathBuf::from(app_data).join("popo");
+    if std::fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+    let _ = std::fs::remove_file(log_dir.join("popo.log.old"));
+    let _ = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(log_dir.join("popo.log"));
+    let _ = std::fs::write(log_dir.join(".clear-logs-on-next-start"), b"");
 }

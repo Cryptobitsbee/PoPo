@@ -1,43 +1,242 @@
 rules_version = '2';
 
-// popo — Firestore security rules
-//
-// Scope: every document under /users/{uid}/** is owned by that user.
-// A user can read and write ONLY their own data. Unauthenticated requests
-// are rejected outright. This ruleset covers every collection written by
-// the popo desktop app: the user profile doc + sessions, modes, settings,
-// and the _diagnostics ping used by the Account page Test button.
-//
-// Why the nested match:
-//   `match /users/{userId}/{document=**}` matches any path of the form
-//   users/{userId}/<one-or-more-segments> but does NOT match the
-//   users/{userId} doc ITSELF. Without an outer rule for the parent,
-//   direct writes to users/{userId} are rejected with permission-denied.
-//   Those parent writes are what turn the "ghost parent" doc into a
-//   real doc so it shows up in the Firebase Console Data viewer.
-//
-// Deploy via:
-//   firebase deploy --project popo-flow --only firestore:rules
-//
-// The firebase.json at the project root targets the named database
-// "popo-flow" (asia-south1), not the default.
-
+// Owner isolation is necessary but not sufficient for a shared production
+// project: bounded schemas prevent a modified client from writing arbitrary
+// fields or oversized strings. Add future user collections here and to
+// apps/desktop/src/lib/cloudDeletion.ts in the same change.
 service cloud.firestore {
   match /databases/{database}/documents {
-    // The user's top-level profile document.
-    match /users/{userId} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
 
-      // Every subcollection under the user (sessions, modes, settings,
-      // _diagnostics, and any future ones) inherits the same ownership.
-      match /{document=**} {
-        allow read, write: if request.auth != null
-                           && request.auth.uid == userId;
+    function optionalString(data, field, maxLength) {
+      return !(field in data)
+        || (data[field] is string && data[field].size() <= maxLength);
+    }
+
+    function optionalNumber(data, field) {
+      return !(field in data) || data[field] is number;
+    }
+
+    function optionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    function validProfile(userId, data) {
+      return data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoURL',
+          'firstSeenAt', 'lastSeenAt'
+        ])
+        && data.uid == userId
+        && (data.email == null
+          || (data.email is string && data.email.size() <= 320))
+        && (data.displayName == null
+          || (data.displayName is string && data.displayName.size() <= 200))
+        && (data.photoURL == null
+          || (data.photoURL is string && data.photoURL.size() <= 2048))
+        && (!('firstSeenAt' in data) || data.firstSeenAt is timestamp)
+        && data.lastSeenAt is timestamp;
+    }
+
+    function validSession(userId, sessionId, data) {
+      return sessionId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && data.keys().hasOnly([
+          'id', 'createdAt', 'durationMs', 'wordCount', 'language',
+          'modeId', 'rawTranscript', 'formattedTranscript',
+          'audioStoragePath', 'audioCloudPath', 'audioDownloadUrl',
+          'gcpCostEstimate', 'appName', 'appIcon', 'expandedSnippets',
+          '_serverCreatedAt'
+        ])
+        && data.id == sessionId
+        && data.createdAt is number
+        && data.durationMs is number && data.durationMs >= 0
+        && data.wordCount is number && data.wordCount >= 0
+        && data.language is string && data.language.size() <= 64
+        && data.rawTranscript is string && data.rawTranscript.size() <= 100000
+        && optionalString(data, 'modeId', 128)
+        && optionalString(data, 'formattedTranscript', 100000)
+        && optionalString(data, 'audioStoragePath', 4096)
+        && optionalString(data, 'audioDownloadUrl', 4096)
+        && optionalString(data, 'appName', 256)
+        && optionalString(data, 'appIcon', 250000)
+        && optionalNumber(data, 'gcpCostEstimate')
+        && (!('audioCloudPath' in data)
+          || (data.audioCloudPath is string
+            && data.audioCloudPath == 'audio/' + userId + '/' + sessionId + '.wav'))
+        && (!('expandedSnippets' in data)
+          || (data.expandedSnippets is list && data.expandedSnippets.size() <= 100))
+        && data._serverCreatedAt is timestamp;
+    }
+
+    function validMode(modeId, data) {
+      return modeId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && data.keys().hasOnly([
+          'id', 'name', 'systemPrompt', 'language', 'outputFormat',
+          'isDefault', 'usageCount', 'createdAt', 'apps', 'hotkey',
+          'soundPreset', 'translateTo'
+        ])
+        && data.id == modeId
+        && data.name is string && data.name.size() <= 200
+        && data.systemPrompt is string && data.systemPrompt.size() <= 20000
+        && data.outputFormat in ['paragraph', 'bullets', 'raw']
+        && data.isDefault is bool
+        && data.usageCount is number && data.usageCount >= 0
+        && data.createdAt is number
+        && optionalString(data, 'language', 64)
+        && optionalString(data, 'hotkey', 128)
+        && optionalString(data, 'soundPreset', 32)
+        && optionalString(data, 'translateTo', 64)
+        && (!('apps' in data) || (data.apps is list && data.apps.size() <= 100));
+    }
+
+    function validSnippet(snippetId, data) {
+      return snippetId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && data.keys().hasOnly([
+          'id', 'trigger', 'value', 'label', 'createdAt', 'updatedAt',
+          'usageCount'
+        ])
+        && data.id == snippetId
+        && data.trigger is string && data.trigger.size() <= 256
+        && data.value is string && data.value.size() <= 50000
+        && optionalString(data, 'label', 256)
+        && data.createdAt is number
+        && data.updatedAt is number
+        && data.usageCount is number && data.usageCount >= 0;
+    }
+
+    function validDictionaryEntry(entryId, data) {
+      return entryId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && data.keys().hasOnly(['id', 'phrase', 'boost', 'createdAt', 'pinned'])
+        && data.id == entryId
+        && data.phrase is string && data.phrase.size() <= 1000
+        && optionalNumber(data, 'boost')
+        && (!('boost' in data) || (data.boost >= 0 && data.boost <= 20))
+        && data.createdAt is number
+        && optionalBool(data, 'pinned');
+    }
+
+    function validAppIcon(data) {
+      return data.keys().hasOnly(['name', 'iconBase64', 'firstSeenAt', 'lastSeenAt'])
+        && data.name is string && data.name.size() <= 256
+        && data.iconBase64 is string && data.iconBase64.size() <= 250000
+        && (!('firstSeenAt' in data) || data.firstSeenAt is timestamp)
+        && data.lastSeenAt is timestamp;
+    }
+
+    function validSettings(data) {
+      return data.keys().hasOnly([
+          'hotkey', 'recordingMode', 'micDeviceId',
+          'silenceDetectionSeconds', 'language', 'multiLanguageCodes',
+          'defaultModeId', 'autoFormat', 'spokenPunctuation',
+          'spokenEmojis', 'profanityFilter', 'endpointing',
+          'restoreClipboard', 'pasteOverrides', 'storeAudio',
+          'privacyMode', 'soundEffects', 'startAtLogin',
+          'pillSleepOpacity', 'pillActiveOpacity'
+        ])
+        && optionalString(data, 'hotkey', 128)
+        && (!('recordingMode' in data)
+          || data.recordingMode in ['push-to-talk', 'toggle'])
+        && (!('micDeviceId' in data) || data.micDeviceId == null
+          || (data.micDeviceId is string && data.micDeviceId.size() <= 512))
+        && optionalNumber(data, 'silenceDetectionSeconds')
+        && optionalString(data, 'language', 64)
+        && (!('multiLanguageCodes' in data)
+          || (data.multiLanguageCodes is list && data.multiLanguageCodes.size() <= 10))
+        && (!('defaultModeId' in data) || data.defaultModeId == null
+          || (data.defaultModeId is string && data.defaultModeId.size() <= 128))
+        && optionalBool(data, 'autoFormat')
+        && optionalBool(data, 'spokenPunctuation')
+        && optionalBool(data, 'spokenEmojis')
+        && optionalBool(data, 'profanityFilter')
+        && (!('endpointing' in data)
+          || data.endpointing in ['low', 'standard', 'high'])
+        && optionalBool(data, 'restoreClipboard')
+        && (!('pasteOverrides' in data)
+          || (data.pasteOverrides is list && data.pasteOverrides.size() <= 100))
+        && optionalBool(data, 'storeAudio')
+        && optionalBool(data, 'privacyMode')
+        && optionalBool(data, 'soundEffects')
+        && optionalBool(data, 'startAtLogin')
+        && optionalNumber(data, 'pillSleepOpacity')
+        && (!('pillSleepOpacity' in data)
+          || (data.pillSleepOpacity >= 0 && data.pillSleepOpacity <= 1))
+        && optionalNumber(data, 'pillActiveOpacity')
+        && (!('pillActiveOpacity' in data)
+          || (data.pillActiveOpacity >= 0 && data.pillActiveOpacity <= 1));
+    }
+
+    match /users/{userId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+                            && validProfile(userId, request.resource.data);
+
+      match /sessions/{sessionId} {
+        allow read, delete: if isOwner(userId);
+        allow create: if isOwner(userId)
+                      && validSession(userId, sessionId, request.resource.data)
+                      && !('audioStoragePath' in request.resource.data)
+                      && !('audioDownloadUrl' in request.resource.data)
+                      && !('appIcon' in request.resource.data);
+        // Old releases wrote a machine-local path and bearer download URL.
+        // They may survive untouched while another field is patched, but a
+        // client cannot create, add, or alter either legacy field.
+        allow update: if isOwner(userId)
+                      && validSession(userId, sessionId, request.resource.data)
+                      && (!('audioStoragePath' in request.resource.data)
+                        || ('audioStoragePath' in resource.data
+                          && request.resource.data.audioStoragePath
+                            == resource.data.audioStoragePath))
+                      && (!('audioDownloadUrl' in request.resource.data)
+                        || ('audioDownloadUrl' in resource.data
+                          && request.resource.data.audioDownloadUrl
+                            == resource.data.audioDownloadUrl))
+                      && (!('appIcon' in request.resource.data)
+                        || ('appIcon' in resource.data
+                          && request.resource.data.appIcon
+                            == resource.data.appIcon));
+      }
+
+      match /modes/{modeId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+                              && validMode(modeId, request.resource.data);
+      }
+
+      match /snippets/{snippetId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+                              && validSnippet(snippetId, request.resource.data);
+      }
+
+      match /dictionary/{entryId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+                              && validDictionaryEntry(entryId, request.resource.data);
+      }
+
+      match /appIcons/{iconId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+                              && iconId.size() <= 256
+                              && validAppIcon(request.resource.data);
+      }
+
+      match /settings/doc {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+                              && validSettings(request.resource.data);
+      }
+
+      match /_diagnostics/ping {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+                              && request.resource.data.keys().hasOnly(['ts', 'note'])
+                              && request.resource.data.ts is number
+                              && request.resource.data.note == 'popo diagnostic ping';
       }
     }
 
-    // Everything else is denied.
     match /{document=**} {
       allow read, write: if false;
     }

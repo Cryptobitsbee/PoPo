@@ -235,11 +235,8 @@ export default function GCPSetup() {
               color: "var(--text-secondary)",
             }}
           >
-            Path to the GCP service account key with{" "}
-            <code style={{ fontFamily: "var(--font-pixel-grid)" }}>
-              roles/speech.client
-            </code>{" "}
-            permission.
+            Original path to the service-account key. popo never copies the
+            JSON; moving or deleting it pauses Speech-to-Text and Vertex AI.
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

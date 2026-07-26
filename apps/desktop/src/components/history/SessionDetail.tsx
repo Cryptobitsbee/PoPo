@@ -16,6 +16,7 @@ import { useAuthStore } from "../../store/authStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { saveSession } from "../../lib/firestore";
 import { trackSync } from "../../store/syncLogStore";
+import { resolveCloudAudioUrl } from "../../lib/cloudAudio";
 
 /**
  * SessionDetail — expanded panel shown below a selected SessionRow.
@@ -86,10 +87,27 @@ export default function SessionDetail({
     let cancelled = false;
 
     async function resolve() {
-      // Priority 1: cloud download URL.
-      if (session.audioDownloadUrl) {
-        setAudioSrc(session.audioDownloadUrl);
-        return;
+      // Priority 1: authenticated cloud object path (or legacy URL).
+      if (session.audioCloudPath || session.audioDownloadUrl) {
+        setLoadingAudio(true);
+        try {
+          const cloudUrl = await resolveCloudAudioUrl(session);
+          if (cancelled) return;
+          if (cloudUrl) {
+            setAudioSrc(cloudUrl);
+            return;
+          }
+        } catch (error) {
+          if (cancelled) return;
+          // Fall through to the local file when this device has one.
+          if (!session.audioStoragePath) {
+            const message = error instanceof Error ? error.message : String(error);
+            setAudioError(`Couldn't load cloud recording. ${message}`);
+            return;
+          }
+        } finally {
+          if (!cancelled) setLoadingAudio(false);
+        }
       }
 
       // Priority 2: local path.
@@ -142,7 +160,11 @@ export default function SessionDetail({
         blobUrlRef.current = null;
       }
     };
-  }, [session.audioDownloadUrl, session.audioStoragePath]);
+  }, [
+    session.audioCloudPath,
+    session.audioDownloadUrl,
+    session.audioStoragePath,
+  ]);
 
   // ── Compute peaks for the waveform (Rust-side) ─────────────
   // Session 56: moved peak computation to Rust (`cmd_get_audio_peaks`)

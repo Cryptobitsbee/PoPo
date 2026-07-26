@@ -360,9 +360,9 @@ async fn collect_final_results(
                             let text = alt.transcript.trim();
                             if !text.is_empty() {
                                 tracing::debug!(
-                                    "streaming: FINAL segment at +{}ms: {:?} (confidence: {:.2})",
+                                    "streaming: FINAL segment at +{}ms: {} chars (confidence: {:.2})",
                                     start.elapsed().as_millis(),
-                                    text,
+                                    text.chars().count(),
                                     alt.confidence
                                 );
                                 final_segments.push(text.to_string());
@@ -376,10 +376,10 @@ async fn collect_final_results(
                         interim_count += 1;
                         if interim_count == 1 || interim_count % 5 == 0 {
                             tracing::info!(
-                                "streaming: interim #{interim_count} at +{}ms (stability {:.2}): {:?}",
+                                "streaming: interim #{interim_count} at +{}ms (stability {:.2}, {} chars)",
                                 start.elapsed().as_millis(),
                                 result.stability,
-                                alt.transcript.trim()
+                                alt.transcript.trim().chars().count()
                             );
                         }
                     }

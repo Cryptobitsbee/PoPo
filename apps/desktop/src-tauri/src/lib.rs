@@ -66,7 +66,7 @@ async fn prewarm_gemini_for_state(state: &crate::hotkey::PopoState) {
             .vertex_location
             .lock()
             .map(|g| g.clone())
-            .unwrap_or_else(|_| "us-central1".to_string());
+            .unwrap_or_else(|_| "global".to_string());
         if let Some((config, auth)) = gcp_snap {
             if config.is_configured() {
                 if let Ok(token) = auth.access_token().await {
@@ -97,6 +97,21 @@ async fn prewarm_gemini_for_state(state: &crate::hotkey::PopoState) {
 use crate::commands::system as system_cmds;
 use crate::commands::test as test_cmds;
 use crate::commands::test::TestRecordingState;
+
+/// Custom Tauri commands are otherwise globally invokable by every webview.
+/// Keep the narrow switcher surface explicit and deny the pill all custom IPC;
+/// plugin/core capabilities remain governed by the capability JSON files.
+fn custom_command_allowed(window_label: &str, command: &str) -> bool {
+    match window_label {
+        "main" => true,
+        "switcher" => matches!(
+            command,
+            "cmd_set_mode_bindings" | "cmd_set_auto_format_prompt" | "cmd_hide_mode_switcher"
+        ),
+        _ => false,
+    }
+}
+
 use crate::hotkey::{default_hotkey, switcher_hotkey, PopoState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -114,11 +129,14 @@ pub fn run() {
             tracing::info!("second instance detected — focusing existing main window");
             show_main(app);
         }))
-        // Platform plugins.
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_notification::init())
+        // Platform plugins. URL opening is explicit and capability-scoped;
+        // do not inject automatic target=_blank/Ctrl-click handlers.
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None, // no extra launch args
@@ -132,61 +150,78 @@ pub fn run() {
         )
         // GCP config commands (Phase 2 [6] polish). Frontend invokes
         // these from the GCP Setup wizard + Settings page.
-        .invoke_handler(tauri::generate_handler![
-            gcp_cmds::cmd_set_gcp_config,
-            gcp_cmds::cmd_get_gcp_config,
-            gcp_cmds::cmd_gcp_test_connection,
-            gcp_cmds::cmd_gemini_test_connection,
-            gcp_cmds::cmd_update_language,
-            oauth_cmds::cmd_start_oauth_listener,
-            oauth_cmds::cmd_open_oauth_url,
-            settings_cmds::cmd_list_mics,
-            settings_cmds::cmd_set_mic,
-            settings_cmds::cmd_set_hotkey,
-            settings_cmds::cmd_get_current_hotkey,
-            settings_cmds::cmd_set_recording_mode,
-            settings_cmds::cmd_set_restore_clipboard,
-            settings_cmds::cmd_set_silence_detection,
-            settings_cmds::cmd_set_store_audio,
-            settings_cmds::cmd_set_sound_effects,
-            settings_cmds::cmd_set_start_at_login,
-            // Phase C (Chirp 3 feature flags)
-            settings_cmds::cmd_set_spoken_punctuation,
-            settings_cmds::cmd_set_spoken_emojis,
-            settings_cmds::cmd_set_profanity_filter,
-            settings_cmds::cmd_set_multi_language_codes,
-            // Phase D (Gemini Flash auto-format)
-            settings_cmds::cmd_set_auto_format,
-            settings_cmds::cmd_set_auto_format_prompt,
-            // Snippets + Dictionary
-            settings_cmds::cmd_set_snippets,
-            settings_cmds::cmd_set_dictionary,
-            // Per-mode app bindings + per-app paste overrides
-            settings_cmds::cmd_set_mode_bindings,
-            settings_cmds::cmd_set_paste_overrides,
-            // Endpointing sensitivity (Chirp 3)
-            settings_cmds::cmd_set_endpointing_sensitivity,
-            // Gemini 2.5 Flash-Lite polish (Session 34, simplified Session 35)
-            // Session 35: cmd_set_smart_cleanup removed; auto_format gates Gemini.
-            settings_cmds::cmd_set_gemini_api_key,
-            settings_cmds::cmd_set_gemini_provider,
-            // Running-apps enumeration for AppPicker UIs
-            crate::commands::apps::cmd_list_running_apps,
-            // Export + account management
-            crate::commands::export::cmd_export_history_to_file,
-            crate::commands::account::cmd_clear_local_user_data,
-            // Quick Mode Switcher
-            crate::commands::switcher::cmd_show_mode_switcher,
-            crate::commands::switcher::cmd_hide_mode_switcher,
-            crate::commands::switcher::cmd_set_pending_forced_mode,
-            crate::commands::switcher::cmd_clear_pending_forced_mode,
-            audio_cmds::cmd_read_audio_bytes,
-            audio_cmds::cmd_get_audio_peaks,
-            audio_cmds::cmd_get_audio_dir,
-            test_cmds::cmd_test_dictate_start,
-            test_cmds::cmd_test_dictate_stop,
-            system_cmds::cmd_launch_uninstaller,
-        ])
+        .invoke_handler(|invoke: tauri::ipc::Invoke<tauri::Wry>| {
+            let window_label = invoke.message.webview_ref().label().to_string();
+            let command = invoke.message.command().to_string();
+            if !custom_command_allowed(&window_label, &command) {
+                tracing::warn!(
+                    "blocked custom IPC command {command:?} from webview {window_label:?}"
+                );
+                invoke
+                    .resolver
+                    .reject("command is not allowed from this window");
+                return true;
+            }
+
+            let command_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool =
+                tauri::generate_handler![
+                gcp_cmds::cmd_set_gcp_config,
+                gcp_cmds::cmd_get_gcp_config,
+                gcp_cmds::cmd_gcp_test_connection,
+                gcp_cmds::cmd_gemini_test_connection,
+                gcp_cmds::cmd_update_language,
+                oauth_cmds::cmd_start_oauth_listener,
+                oauth_cmds::cmd_open_oauth_url,
+                settings_cmds::cmd_list_mics,
+                settings_cmds::cmd_set_mic,
+                settings_cmds::cmd_set_hotkey,
+                settings_cmds::cmd_get_current_hotkey,
+                settings_cmds::cmd_set_recording_mode,
+                settings_cmds::cmd_set_restore_clipboard,
+                settings_cmds::cmd_set_silence_detection,
+                settings_cmds::cmd_set_store_audio,
+                settings_cmds::cmd_set_sound_effects,
+                settings_cmds::cmd_set_start_at_login,
+                // Phase C (Chirp 3 feature flags)
+                settings_cmds::cmd_set_spoken_punctuation,
+                settings_cmds::cmd_set_spoken_emojis,
+                settings_cmds::cmd_set_profanity_filter,
+                settings_cmds::cmd_set_multi_language_codes,
+                // Phase D (Gemini Flash auto-format)
+                settings_cmds::cmd_set_auto_format,
+                settings_cmds::cmd_set_auto_format_prompt,
+                // Snippets + Dictionary
+                settings_cmds::cmd_set_snippets,
+                settings_cmds::cmd_set_dictionary,
+                // Per-mode app bindings + per-app paste overrides
+                settings_cmds::cmd_set_mode_bindings,
+                settings_cmds::cmd_set_paste_overrides,
+                // Endpointing sensitivity (Chirp 3)
+                settings_cmds::cmd_set_endpointing_sensitivity,
+                // Gemini 3.5 Flash-Lite polish (Session 58)
+                // Session 35: cmd_set_smart_cleanup removed; auto_format gates Gemini.
+                settings_cmds::cmd_set_gemini_api_key,
+                crate::commands::secrets::cmd_get_gemini_api_key,
+                settings_cmds::cmd_set_gemini_provider,
+                // Running-apps enumeration for AppPicker UIs
+                crate::commands::apps::cmd_list_running_apps,
+                // Export + account management
+                crate::commands::export::cmd_export_history,
+                crate::commands::account::cmd_clear_local_user_data,
+                // Quick Mode Switcher
+                crate::commands::switcher::cmd_show_mode_switcher,
+                crate::commands::switcher::cmd_hide_mode_switcher,
+                crate::commands::switcher::cmd_set_pending_forced_mode,
+                crate::commands::switcher::cmd_clear_pending_forced_mode,
+                audio_cmds::cmd_read_audio_bytes,
+                audio_cmds::cmd_delete_audio_file,
+                audio_cmds::cmd_get_audio_peaks,
+                test_cmds::cmd_test_dictate_start,
+                test_cmds::cmd_test_dictate_stop,
+                system_cmds::cmd_launch_uninstaller,
+            ];
+            command_handler(invoke)
+        })
         .setup(|app| {
             // --- First-run detection -----------------------------------
             // We treat "no marker file in %APPDATA%\popo" as first run.
@@ -258,10 +293,12 @@ pub fn run() {
                 // whether to render the overlay.
                 show_main(&app.handle());
 
-                // Enable autostart on first install. The user can still
-                // disable it later in Settings → System → Start at login.
-                // Safe to call unconditionally (idempotent).
-                #[cfg(desktop)]
+                // Enable autostart on first install for release builds.
+                // Development binaries must never register
+                // target\debug\popo.exe: that file survives an installed
+                // app uninstall and would reopen a console + pill at login.
+                // Users can still opt out in Settings → System.
+                #[cfg(all(desktop, not(debug_assertions)))]
                 {
                     use tauri_plugin_autostart::ManagerExt;
                     if let Err(e) = app.autolaunch().enable() {
@@ -287,6 +324,16 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<PopoState>();
                 gcp_cmds::restore_gcp_config_on_boot(&app_handle, state.inner()).await;
+                match crate::commands::secrets::load_gemini_api_key(&app_handle) {
+                    Ok(key) => {
+                        if let Ok(mut slot) = state.inner().gemini_api_key.lock() {
+                            *slot = key;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("could not restore encrypted Gemini key: {error}");
+                    }
+                }
                 // Pre-warm the GCP TLS channel immediately after config
                 // restores so the first dictation doesn't pay the ~200-400ms
                 // cold handshake cost.
@@ -467,7 +514,7 @@ pub fn run() {
 
                             if near != was_near {
                                 was_near = near;
-                                let _ = app_cursor.emit("pill:cursor:near", near);
+                                let _ = app_cursor.emit_to("pill", "pill:cursor:near", near);
                             }
                         }
                     });
@@ -667,5 +714,40 @@ fn mark_first_run_complete(app: &tauri::AppHandle) {
         tracing::warn!("could not write first-run marker {}: {e}", marker.display());
     } else {
         tracing::info!("first-run marker written: {}", marker.display());
+    }
+}
+
+#[cfg(test)]
+mod ipc_origin_tests {
+    use super::custom_command_allowed;
+
+    #[test]
+    fn main_can_use_registered_custom_commands() {
+        assert!(custom_command_allowed("main", "cmd_get_gemini_api_key"));
+        assert!(custom_command_allowed("main", "cmd_clear_local_user_data"));
+    }
+
+    #[test]
+    fn switcher_has_only_its_required_command_surface() {
+        assert!(custom_command_allowed("switcher", "cmd_set_mode_bindings"));
+        assert!(custom_command_allowed(
+            "switcher",
+            "cmd_set_auto_format_prompt"
+        ));
+        assert!(custom_command_allowed("switcher", "cmd_hide_mode_switcher"));
+        assert!(!custom_command_allowed(
+            "switcher",
+            "cmd_get_gemini_api_key"
+        ));
+        assert!(!custom_command_allowed(
+            "switcher",
+            "cmd_clear_local_user_data"
+        ));
+    }
+
+    #[test]
+    fn pill_and_unknown_webviews_have_no_custom_command_access() {
+        assert!(!custom_command_allowed("pill", "cmd_get_gcp_config"));
+        assert!(!custom_command_allowed("unknown", "cmd_list_running_apps"));
     }
 }

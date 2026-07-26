@@ -1,77 +1,128 @@
-// commands/audio.rs — audio file commands for the History page.
 //
-// These commands give the frontend filesystem access to the audio
-// files that `audio::storage::save_session_wav` writes to
-// `%APPDATA%\ai.popo.desktop\audio\{sessionId}.wav`.
+// Narrow IPC access to WAV files created by
+// `audio::storage::save_session_wav` under:
+//   %APPDATA%\ai.popo.desktop\audio\{sessionId}.wav
 //
-// Why Rust commands instead of @tauri-apps/plugin-fs:
-//   In Tauri v2, the fs plugin is scoped — every file read must be
-//   explicitly allowed via a path glob in tauri.conf.json or the
-//   capabilities JSON. Without a scope entry, readFile() fails
-//   SILENTLY with a permission error that surfaces only in the
-//   Rust log. Rust commands have no such restriction.
-//
-// Commands:
-//   - cmd_read_audio_bytes(path) → Vec<u8>
-//   - cmd_get_audio_peaks(path, bar_count) → Vec<f32>   [Session 56]
-//   - cmd_get_audio_dir() → String
+// Frontend-provided paths are untrusted. Every command canonicalizes both
+// the app audio directory and requested file, rejects path/junction escapes,
+// requires a regular .wav file, and is callable only from the main webview.
 
-use tauri::{AppHandle, Manager};
+use std::path::{Path, PathBuf};
 
-/// Read a local audio file and return its raw bytes.
-///
-/// Used by the frontend to:
-///   1. Upload the WAV to Firebase Storage (useAudioUpload).
-///   2. Play it inline via a Blob URL (SessionRow).
-///
-/// Errors if the path does not exist or is not readable.
-#[tauri::command]
-pub async fn cmd_read_audio_bytes(path: String) -> Result<Vec<u8>, String> {
-    tokio::fs::read(&path)
-        .await
-        .map_err(|e| format!("failed to read audio file at {path:?}: {e}"))
+use tauri::{AppHandle, Manager, WebviewWindow};
+
+const MAX_AUDIO_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+fn require_main_window(window: &WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("audio file commands are available only to the main window".into());
+    }
+    Ok(())
 }
 
-/// Compute waveform peaks from a local WAV file.
-///
-/// Session 56: replaces the old approach of sending raw bytes to the
-/// frontend and trying to decode them with Web Audio API's
-/// `decodeAudioData` — which silently failed in WebView2 for Tauri's
-/// asset:// protocol URLs AND was fragile for the Blob URL path.
-///
-/// This Rust-side approach:
-///   1. Reads the WAV file directly (via `hound::WavReader`).
-///   2. Decodes ALL samples to f32.
-///   3. Buckets into `bar_count` segments.
-///   4. For each bucket, computes the peak absolute amplitude.
-///   5. Normalizes so the loudest peak = 1.0.
-///   6. Returns `Vec<f32>` — just 64 tiny JSON numbers.
-///
-/// The frontend renders these directly as bar heights. No Web Audio
-/// dependency, no ArrayBuffer gymnastics, no decoding failures.
+fn audio_dir_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|base| base.join("audio"))
+        .map_err(|e| format!("app_data_dir failed: {e}"))
+}
+
+fn validate_audio_file(requested: &Path, audio_dir: &Path) -> Result<PathBuf, String> {
+    let canonical_dir = std::fs::canonicalize(audio_dir)
+        .map_err(|e| format!("audio directory is unavailable: {e}"))?;
+    let canonical_file =
+        std::fs::canonicalize(requested).map_err(|e| format!("audio file is unavailable: {e}"))?;
+
+    if !canonical_file.starts_with(&canonical_dir) {
+        return Err("requested audio file is outside PoPo's audio directory".into());
+    }
+    if canonical_file
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("wav"))
+    {
+        return Err("requested audio file must have a .wav extension".into());
+    }
+
+    let metadata = std::fs::metadata(&canonical_file)
+        .map_err(|e| format!("could not inspect audio file: {e}"))?;
+    if !metadata.is_file() {
+        return Err("requested audio path is not a regular file".into());
+    }
+    if metadata.len() > MAX_AUDIO_FILE_BYTES {
+        return Err("audio file is too large to read safely".into());
+    }
+
+    Ok(canonical_file)
+}
+
+fn validated_path(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    requested: &str,
+) -> Result<PathBuf, String> {
+    require_main_window(window)?;
+    let audio_dir = audio_dir_path(app)?;
+    validate_audio_file(Path::new(requested), &audio_dir)
+}
+
+/// Read a local PoPo WAV for upload or Blob-based playback.
 #[tauri::command]
-pub fn cmd_get_audio_peaks(path: String, bar_count: usize) -> Result<Vec<f32>, String> {
+pub async fn cmd_read_audio_bytes(
+    app: AppHandle,
+    window: WebviewWindow,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    let safe_path = validated_path(&app, &window, &path)?;
+    tokio::fs::read(&safe_path)
+        .await
+        .map_err(|e| format!("failed to read audio file: {e}"))
+}
+
+/// Delete one local PoPo WAV. The same path validation as reads applies.
+#[tauri::command]
+pub async fn cmd_delete_audio_file(
+    app: AppHandle,
+    window: WebviewWindow,
+    path: String,
+) -> Result<(), String> {
+    let safe_path = validated_path(&app, &window, &path)?;
+    tokio::fs::remove_file(&safe_path)
+        .await
+        .map_err(|e| format!("failed to delete audio file: {e}"))
+}
+
+/// Compute normalized waveform peaks from a local PoPo WAV.
+#[tauri::command]
+pub fn cmd_get_audio_peaks(
+    app: AppHandle,
+    window: WebviewWindow,
+    path: String,
+    bar_count: usize,
+) -> Result<Vec<f32>, String> {
     use hound::WavReader;
 
-    let bar_count = bar_count.max(1).min(256); // sanity clamp
-
-    let reader =
-        WavReader::open(&path).map_err(|e| format!("failed to open WAV at {path:?}: {e}"))?;
+    let safe_path = validated_path(&app, &window, &path)?;
+    let bar_count = bar_count.clamp(1, 256);
+    let reader = WavReader::open(&safe_path).map_err(|e| format!("failed to open WAV: {e}"))?;
 
     let spec = reader.spec();
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
             let bits = spec.bits_per_sample;
-            let max_val = (1u32 << (bits - 1)) as f32;
+            if !(1..=32).contains(&bits) {
+                return Err(format!("unsupported WAV bit depth: {bits}"));
+            }
+            let max_val = (1u64 << (bits - 1)) as f32;
             reader
                 .into_samples::<i32>()
-                .filter_map(|s| s.ok())
-                .map(|s| s as f32 / max_val)
+                .filter_map(Result::ok)
+                .map(|sample| sample as f32 / max_val)
                 .collect()
         }
         hound::SampleFormat::Float => reader
             .into_samples::<f32>()
-            .filter_map(|s| s.ok())
+            .filter_map(Result::ok)
             .collect(),
     };
 
@@ -79,7 +130,6 @@ pub fn cmd_get_audio_peaks(path: String, bar_count: usize) -> Result<Vec<f32>, S
         return Ok(vec![0.0; bar_count]);
     }
 
-    // If stereo+, take only channel 0.
     let channels = spec.channels as usize;
     let mono: Vec<f32> = if channels <= 1 {
         samples
@@ -87,50 +137,75 @@ pub fn cmd_get_audio_peaks(path: String, bar_count: usize) -> Result<Vec<f32>, S
         samples.iter().step_by(channels).copied().collect()
     };
 
-    let per_bucket = mono.len().max(1) / bar_count.max(1);
-    let per_bucket = per_bucket.max(1);
-
+    let per_bucket = (mono.len() / bar_count).max(1);
     let mut peaks = Vec::with_capacity(bar_count);
-    let mut global_max: f32 = 0.0;
+    let mut global_max = 0.0_f32;
 
-    for i in 0..bar_count {
-        let start = i * per_bucket;
-        let end = ((i + 1) * per_bucket).min(mono.len());
-        let mut peak: f32 = 0.0;
-        for j in start..end {
-            let v = mono[j].abs();
-            if v > peak {
-                peak = v;
-            }
-        }
+    for index in 0..bar_count {
+        let start = index.saturating_mul(per_bucket).min(mono.len());
+        let end = ((index + 1).saturating_mul(per_bucket)).min(mono.len());
+        let peak = mono[start..end]
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        global_max = global_max.max(peak);
         peaks.push(peak);
-        if peak > global_max {
-            global_max = peak;
-        }
     }
 
-    // Pad if fewer buckets than requested (very short file).
-    while peaks.len() < bar_count {
-        peaks.push(0.0);
-    }
-
-    // Normalize to 0..1.
     if global_max > 0.0 {
-        for p in &mut peaks {
-            *p /= global_max;
+        for peak in &mut peaks {
+            *peak /= global_max;
         }
     }
 
     Ok(peaks)
 }
 
-/// Return the absolute path of `%APPDATA%\ai.popo.desktop\audio\`.
-#[tauri::command]
-pub fn cmd_get_audio_dir(app: AppHandle) -> Result<String, String> {
-    let mut dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir failed: {e}"))?;
-    dir.push("audio");
-    Ok(dir.to_string_lossy().into_owned())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn test_root() -> PathBuf {
+        std::env::temp_dir().join(format!("popo-audio-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn accepts_regular_wav_inside_audio_directory() {
+        let root = test_root();
+        let audio_dir = root.join("audio");
+        fs::create_dir_all(&audio_dir).unwrap();
+        let wav = audio_dir.join("session.wav");
+        fs::write(&wav, b"RIFF").unwrap();
+
+        let result = validate_audio_file(&wav, &audio_dir);
+        assert!(result.is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_files_outside_audio_directory() {
+        let root = test_root();
+        let audio_dir = root.join("audio");
+        fs::create_dir_all(&audio_dir).unwrap();
+        let outside = root.join("outside.wav");
+        fs::write(&outside, b"RIFF").unwrap();
+
+        let error = validate_audio_file(&outside, &audio_dir).unwrap_err();
+        assert!(error.contains("outside"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_wav_files_inside_audio_directory() {
+        let root = test_root();
+        let audio_dir = root.join("audio");
+        fs::create_dir_all(&audio_dir).unwrap();
+        let text = audio_dir.join("notes.txt");
+        fs::write(&text, b"not audio").unwrap();
+
+        let error = validate_audio_file(&text, &audio_dir).unwrap_err();
+        assert!(error.contains(".wav"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -70,6 +70,22 @@ function hydrate<T>(key: string, fallback: T): T {
       }
     }
 
+    // Gemini 3.5 Flash-Lite is served only from global, us, and eu.
+    // Older popo builds offered single regions such as us-central1;
+    // normalize those persisted values so the next test/dictation does
+    // not keep hitting a guaranteed Vertex 404.
+    if (key === POPO_GCP_KEY) {
+      const gcp = merged as unknown as GCPSettings;
+      const supported = new Set(["global", "us", "eu"]);
+      if (!supported.has((gcp.vertexLocation ?? "").trim().toLowerCase())) {
+        gcp.vertexLocation = "global";
+      }
+      // Always rewrite the legacy record through persist(), which strips
+      // geminiApiKey. A pre-hardening plaintext key remains in this
+      // in-memory `merged` value long enough for the Rust DPAPI migration.
+      persist(POPO_GCP_KEY, gcp);
+    }
+
     return merged;
   } catch {
     return fallback;
@@ -78,7 +94,11 @@ function hydrate<T>(key: string, fallback: T): T {
 
 function persist(key: string, value: unknown): void {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const diskValue =
+      key === POPO_GCP_KEY && value && typeof value === "object"
+        ? { ...(value as Record<string, unknown>), geminiApiKey: undefined }
+        : value;
+    localStorage.setItem(key, JSON.stringify(diskValue));
   } catch {
     // Quota / private mode — settings survive only for the session.
   }
@@ -117,6 +137,8 @@ interface SettingsStore {
    * to tolerate schema additions.
    */
   hydrateFromRemote: (remote: Partial<Settings>) => void;
+  /** Reset local state without any Firestore write (account erasure path). */
+  resetLocal: () => void;
   reset: () => void;
 }
 
@@ -165,6 +187,14 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
       // visibility change.
       void emitCrossWebview(SETTINGS_CHANGED_EVENT);
       return { settings: next };
+    }),
+
+  resetLocal: () =>
+    set(() => {
+      persist(POPO_SETTINGS_KEY, DEFAULT_SETTINGS);
+      persist(POPO_GCP_KEY, DEFAULT_GCP_SETTINGS);
+      void emitCrossWebview(SETTINGS_CHANGED_EVENT);
+      return { settings: DEFAULT_SETTINGS, gcp: DEFAULT_GCP_SETTINGS };
     }),
 
   reset: () =>

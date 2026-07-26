@@ -105,8 +105,12 @@ pub fn cmd_set_mic(state: State<'_, PopoState>, id: Option<String>) -> Result<()
         .map_err(|_| "PopoState mic mutex poisoned".to_string())?;
     *slot = normalized.clone();
     tracing::info!(
-        "cmd_set_mic: selected mic = {}",
-        normalized.as_deref().unwrap_or("<system default>")
+        "cmd_set_mic: {}",
+        if normalized.is_some() {
+            "custom device selected"
+        } else {
+            "system default selected"
+        }
     );
     Ok(())
 }
@@ -285,18 +289,32 @@ pub fn cmd_set_sound_effects(state: State<'_, PopoState>, enabled: bool) -> Resu
 /// Windows\\CurrentVersion\\Run entry.
 #[tauri::command]
 pub async fn cmd_set_start_at_login(app: AppHandle, enabled: bool) -> Result<(), String> {
-    use tauri_plugin_autostart::ManagerExt;
-    let mgr = app.autolaunch();
-    let result = if enabled { mgr.enable() } else { mgr.disable() };
-    match result {
-        Ok(()) => {
-            tracing::info!("cmd_set_start_at_login: {enabled}");
-            Ok(())
-        }
-        Err(e) => {
-            let msg = format!("autostart update failed: {e}");
-            tracing::error!("{msg}");
-            Err(msg)
+    // Never let a development run register target\debug\popo.exe in
+    // HKCU\...\Run. That binary remains in the source tree after an
+    // installed copy is removed and opens a console plus the pill at
+    // the next login. Release builds retain normal toggle behavior.
+    #[cfg(debug_assertions)]
+    {
+        let _ = app;
+        tracing::info!("cmd_set_start_at_login ignored in debug build (requested: {enabled})");
+        return Ok(());
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let mgr = app.autolaunch();
+        let result = if enabled { mgr.enable() } else { mgr.disable() };
+        match result {
+            Ok(()) => {
+                tracing::info!("cmd_set_start_at_login: {enabled}");
+                Ok(())
+            }
+            Err(e) => {
+                let msg = format!("autostart update failed: {e}");
+                tracing::error!("{msg}");
+                Err(msg)
+            }
         }
     }
 }
@@ -431,11 +449,7 @@ pub fn cmd_set_auto_format_prompt(
         .lock()
         .map_err(|_| "PopoState auto_format_prompt mutex poisoned".to_string())?;
     let trimmed = prompt.trim();
-    tracing::info!(
-        "cmd_set_auto_format_prompt: {} chars (preview: {:?})",
-        trimmed.len(),
-        trimmed.chars().take(60).collect::<String>()
-    );
+    tracing::info!("cmd_set_auto_format_prompt: {} chars", trimmed.len());
     *slot = trimmed.to_string();
     Ok(())
 }
@@ -643,6 +657,7 @@ pub fn cmd_set_mode_bindings(
 /// next dictation, falling through to Chirp raw).
 #[tauri::command]
 pub fn cmd_set_gemini_api_key(
+    app: AppHandle,
     state: State<'_, PopoState>,
     key: Option<String>,
 ) -> Result<(), String> {
@@ -654,6 +669,7 @@ pub fn cmd_set_gemini_api_key(
             Some(t)
         }
     });
+    crate::commands::secrets::persist_gemini_api_key(&app, normalized.as_deref())?;
     let mut slot = state
         .inner()
         .gemini_api_key
@@ -672,8 +688,8 @@ pub fn cmd_set_gemini_api_key(
 }
 
 /// Set the Gemini provider ("aistudio" or "vertex") + the Vertex
-/// region. Pushed from Settings whenever the user changes the provider
-/// dropdown or the Vertex location field. Unknown provider strings
+/// location. Pushed from Settings whenever the user changes the provider
+/// dropdown or Vertex routing scope. Unknown provider strings
 /// normalise to "aistudio" so a malformed value can never disable
 /// polish unexpectedly.
 ///
@@ -700,17 +716,23 @@ pub fn cmd_set_gemini_provider(
         *slot = normalized.to_string();
     }
     if let Some(loc) = location {
-        let trimmed = loc.trim().to_string();
-        if !trimmed.is_empty() {
-            let mut slot = state
-                .inner()
-                .vertex_location
-                .lock()
-                .map_err(|_| "PopoState vertex_location mutex poisoned".to_string())?;
-            *slot = trimmed;
-        }
+        let normalized_location = crate::gcp::gemini::normalize_vertex_location(&loc);
+        let mut slot = state
+            .inner()
+            .vertex_location
+            .lock()
+            .map_err(|_| "PopoState vertex_location mutex poisoned".to_string())?;
+        *slot = normalized_location.to_string();
     }
-    tracing::info!("cmd_set_gemini_provider: provider={normalized}");
+    tracing::info!(
+        "cmd_set_gemini_provider: provider={normalized}, vertex_location={}",
+        state
+            .inner()
+            .vertex_location
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| crate::gcp::gemini::DEFAULT_VERTEX_LOCATION.to_string())
+    );
     Ok(())
 }
 

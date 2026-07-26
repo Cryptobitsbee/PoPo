@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import type { Session, Mode } from "@popo/shared-types";
 import { invoke } from "@tauri-apps/api/core";
+import { resolveCloudAudioUrl } from "../../lib/cloudAudio";
 import Chip from "../shared/Chip";
 import ConfirmDialog from "../shared/ConfirmDialog";
 import SessionDetail from "./SessionDetail";
@@ -90,11 +91,20 @@ export default function SessionRow({
 
     // If we don't have a src yet, load it.
     if (!inlineAudioSrc) {
-      // Try cloud URL first (no byte transfer needed).
-      if (session.audioDownloadUrl) {
-        setInlineAudioSrc(session.audioDownloadUrl);
-        // Play after state update via the effect below.
-      } else if (session.audioStoragePath) {
+      // Try authenticated cloud storage first (legacy URLs still resolve).
+      let sourceResolved = false;
+      if (session.audioCloudPath || session.audioDownloadUrl) {
+        try {
+          const cloudUrl = await resolveCloudAudioUrl(session);
+          if (cloudUrl) {
+            setInlineAudioSrc(cloudUrl);
+            sourceResolved = true;
+          }
+        } catch {
+          if (!session.audioStoragePath) return;
+        }
+      }
+      if (!sourceResolved && session.audioStoragePath) {
         try {
           const bytes = await invoke<number[]>("cmd_read_audio_bytes", {
             path: session.audioStoragePath,
@@ -155,7 +165,9 @@ export default function SessionRow({
   // playback lives in SessionDetail (single <audio> element, proper
   // scrubber + time display) which mounts when the row is selected.
   const hasAudio = Boolean(
-    session.audioDownloadUrl || session.audioStoragePath,
+    session.audioCloudPath ||
+      session.audioDownloadUrl ||
+      session.audioStoragePath,
   );
 
   const transcript = session.formattedTranscript ?? session.rawTranscript;

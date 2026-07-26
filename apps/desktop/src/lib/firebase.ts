@@ -29,7 +29,6 @@ import {
 } from "firebase/auth";
 import { initializeFirestore, type Firestore } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
-import { getAnalytics, type Analytics } from "firebase/analytics";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -40,7 +39,6 @@ interface FirebaseConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
-  measurementId?: string;
 }
 
 function readEnv(): FirebaseConfig | null {
@@ -51,9 +49,8 @@ function readEnv(): FirebaseConfig | null {
     storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ?? "",
     messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? "",
     appId: import.meta.env.VITE_FIREBASE_APP_ID ?? "",
-    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID ?? undefined,
   };
-  if (!cfg.apiKey || !cfg.projectId) return null;
+  if (Object.values(cfg).some((value) => !value.trim())) return null;
   return cfg;
 }
 
@@ -76,7 +73,8 @@ export const auth: Auth | null = firebaseApp ? getAuth(firebaseApp) : null;
 //
 // If we ever migrate to (default) in a future project, change this back to
 // `getFirestore(firebaseApp)`.
-const FIRESTORE_DB_ID = "popo-flow";
+const FIRESTORE_DB_ID =
+  import.meta.env.VITE_FIRESTORE_DATABASE_ID?.trim() || "popo-flow";
 
 // Transport settings for Tauri WebView2:
 //   Firestore's default transport ("WebChannel") uses long-lived Google-proprietary
@@ -115,9 +113,6 @@ export const db: Firestore | null = firebaseApp
       FIRESTORE_DB_ID,
     )
   : null;
-
-export const analytics: Analytics | null =
-  firebaseApp && config?.measurementId ? getAnalytics(firebaseApp) : null;
 
 /** Firebase Storage for cloud audio backup (audio/{uid}/{sessionId}.wav). */
 export const storage: FirebaseStorage | null = firebaseApp
@@ -161,10 +156,14 @@ function base64url(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+function randomBase64url(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return base64url(bytes);
+}
+
 function generatePkceVerifier(): string {
-  const arr = new Uint8Array(64);
-  crypto.getRandomValues(arr);
-  return base64url(arr);
+  return randomBase64url(64);
 }
 
 async function generatePkceChallenge(verifier: string): Promise<string> {
@@ -173,11 +172,17 @@ async function generatePkceChallenge(verifier: string): Promise<string> {
   return base64url(new Uint8Array(hash));
 }
 
+interface GoogleTokenResponse {
+  access_token?: string;
+  id_token?: string;
+  error?: string;
+  error_description?: string;
+}
+
 async function signInWithSystemBrowser(): Promise<User> {
   if (!auth) throw new Error("Firebase not configured");
 
-  const clientId = import.meta.env.VITE_GOOGLE_DESKTOP_CLIENT_ID;
-  const clientSecret = import.meta.env.VITE_GOOGLE_DESKTOP_CLIENT_SECRET;
+  const clientId = import.meta.env.VITE_GOOGLE_DESKTOP_CLIENT_ID?.trim();
   if (!clientId) {
     throw new Error(
       "Desktop OAuth client ID missing. Add VITE_GOOGLE_DESKTOP_CLIENT_ID " +
@@ -185,55 +190,63 @@ async function signInWithSystemBrowser(): Promise<User> {
         "→ APIs & Services → Credentials → Create OAuth client → Desktop app).",
     );
   }
-  if (!clientSecret) {
-    throw new Error(
-      "Desktop OAuth client secret missing. Add " +
-        "VITE_GOOGLE_DESKTOP_CLIENT_SECRET to apps/desktop/.env.local. " +
-        "It's shown next to the client ID in Google Cloud Console.",
-    );
-  }
 
-  // 1. Start the loopback listener in Rust.
-  const port = await invoke<number>("cmd_start_oauth_listener");
-  const redirectUri = `http://127.0.0.1:${port}`;
-
-  // 2. Generate PKCE verifier + challenge.
+  // 1. Generate independent PKCE and OAuth state values. PKCE binds the
+  //    authorization code to this process; state prevents login CSRF and
+  //    callback substitution. Rust also validates this state before it
+  //    accepts a loopback request.
   const verifier = generatePkceVerifier();
   const challenge = await generatePkceChallenge(verifier);
+  const expectedState = randomBase64url(32);
 
-  // 3. Start listening for the callback event BEFORE opening the
-  //    browser — avoids a race where the callback arrives first.
+  // 2. Start a random-port loopback listener bound to the state nonce.
+  const port = await invoke<number>("cmd_start_oauth_listener", {
+    expectedState,
+  });
+  const redirectUri = `http://127.0.0.1:${port}`;
+
+  // 3. Register the callback listener completely before opening the
+  //    browser. The earlier implementation started registration but did
+  //    not await it, leaving a small callback race.
+  let resolveCallback!: (code: string) => void;
+  let rejectCallback!: (error: Error) => void;
   const callbackPromise = new Promise<string>((resolve, reject) => {
-    let unlistenFn: (() => void) | null = null;
-    const timer = window.setTimeout(() => {
-      unlistenFn?.();
-      reject(new Error("Sign-in timed out after 3 minutes."));
-    }, 180_000);
-
-    listen<string>("oauth:callback", (event) => {
-      window.clearTimeout(timer);
-      unlistenFn?.();
-      const params = new URLSearchParams(event.payload);
-      const error = params.get("error");
-      const code = params.get("code");
-      if (error) {
-        reject(new Error(`Google OAuth error: ${error}`));
-      } else if (code) {
-        resolve(code);
-      } else {
-        reject(new Error("No authorization code received."));
-      }
-    })
-      .then((fn) => {
-        unlistenFn = fn;
-      })
-      .catch((e) => {
-        window.clearTimeout(timer);
-        reject(e);
-      });
+    resolveCallback = resolve;
+    rejectCallback = reject;
   });
 
-  // 4. Build the Google OAuth URL.
+  let timeoutId: number | undefined;
+  const unlisten = await listen<string>("oauth:callback", (event) => {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    unlisten();
+
+    const params = new URLSearchParams(event.payload);
+    const returnedState = params.get("state");
+    if (!returnedState || returnedState !== expectedState) {
+      rejectCallback(new Error("OAuth state mismatch. Sign-in was cancelled."));
+      return;
+    }
+
+    const error = params.get("error");
+    const errorDescription = params.get("error_description");
+    const code = params.get("code");
+    if (error) {
+      rejectCallback(new Error(errorDescription || `Google OAuth error: ${error}`));
+    } else if (code) {
+      resolveCallback(code);
+    } else {
+      rejectCallback(new Error("No authorization code received."));
+    }
+  });
+
+  timeoutId = window.setTimeout(() => {
+    unlisten();
+    rejectCallback(new Error("Sign-in timed out after 3 minutes."));
+  }, 180_000);
+
+  // 4. Build the Google OAuth URL. Desktop OAuth client IDs are public
+  //    identifiers; installed apps cannot keep a client secret. PKCE and
+  //    state provide the proof and CSRF protections for this flow.
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", clientId);
   authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -241,30 +254,30 @@ async function signInWithSystemBrowser(): Promise<User> {
   authUrl.searchParams.set("scope", "openid email profile");
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
+  authUrl.searchParams.set("state", expectedState);
   authUrl.searchParams.set("prompt", "select_account");
   authUrl.searchParams.set("access_type", "online");
 
-  // 5. Open the system browser via a Rust command (OpenerExt). This
-  //    bypasses the JS-layer `opener:allow-open-url` capability scope
-  //    that was blocking Google's OAuth URL with the error
-  //    "Not allowed to open url". Rust-side opener calls are
-  //    trusted code and don't go through the capability system.
-  await invoke("cmd_open_oauth_url", { url: authUrl.toString() });
+  // 5. Open only the validated Google authorization endpoint through
+  //    the Rust command. If opening fails, tear down the pending listener.
+  try {
+    await invoke("cmd_open_oauth_url", { url: authUrl.toString() });
+  } catch (error) {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    unlisten();
+    throw error;
+  }
 
-  // 6. Wait for the callback.
+  // 6. Wait for and validate the loopback callback.
   const code = await callbackPromise;
 
-  // 7. Exchange code for tokens at Google's token endpoint.
-  //    As of Sep 2022, Google requires client_secret for Desktop
-  //    OAuth clients even when using PKCE. This "secret" is embedded
-  //    in desktop apps by design — PKCE is the real proof of identity.
-  //    See https://developers.google.com/identity/protocols/oauth2/native-app
+  // 7. Exchange the code. Google documents client_secret as optional for
+  //    installed-app token exchange; embedding one would not make it secret.
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: clientId,
-      client_secret: clientSecret,
       code,
       code_verifier: verifier,
       grant_type: "authorization_code",
@@ -272,30 +285,22 @@ async function signInWithSystemBrowser(): Promise<User> {
     }),
   });
 
-  if (!tokenResponse.ok) {
-    const errBody = await tokenResponse.text();
+  const tokens = (await tokenResponse
+    .json()
+    .catch(() => ({}))) as GoogleTokenResponse;
+  if (!tokenResponse.ok || tokens.error) {
     throw new Error(
-      `Token exchange failed (${tokenResponse.status}): ${errBody}`,
+      tokens.error_description ||
+        tokens.error ||
+        `Token exchange failed (${tokenResponse.status}).`,
     );
-  }
-
-  const tokens: {
-    access_token?: string;
-    id_token?: string;
-    error?: string;
-    error_description?: string;
-  } = await tokenResponse.json();
-
-  if (tokens.error) {
-    throw new Error(tokens.error_description ?? tokens.error);
   }
   if (!tokens.id_token) {
     throw new Error("Token response had no id_token");
   }
 
   // 8. Sign in to Firebase with the Google ID token. Firebase verifies
-  //    it against Google's public keys and matches the email to an
-  //    existing user (or creates one).
+  //    it against Google's public keys and maps it to the Firebase user.
   const credential = GoogleAuthProvider.credential(
     tokens.id_token,
     tokens.access_token,

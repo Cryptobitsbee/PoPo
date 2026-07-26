@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "switcher",
+  "description": "Minimal permissions for the Quick Mode Switcher.",
+  "windows": ["switcher"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-emit"
+  ]
+}

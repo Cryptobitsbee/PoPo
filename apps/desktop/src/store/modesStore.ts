@@ -271,6 +271,8 @@ interface ModesStore {
   setDefault: (id: string) => void;
   /** Factory-reset to SEED_MODES. Syncs all seeds to Firestore if signed in. */
   reset: () => void;
+  /** Reset only local state; never writes to Firestore (account erasure). */
+  resetLocal: () => void;
   /** Reset modes to latest SEED_MODES + persist version marker. */
   resetToDefaults: () => void;
   /**
@@ -320,6 +322,14 @@ export const useModesStore = create<ModesStore>((set) => ({
       persist(SEED_MODES);
       localStorage.setItem(POPO_MODES_VERSION_KEY, String(SEED_MODE_VERSION));
       syncSaveAll(SEED_MODES);
+      void emitCrossWebview(MODES_CHANGED_EVENT);
+      return { modes: SEED_MODES };
+    }),
+
+  resetLocal: () =>
+    set(() => {
+      persist(SEED_MODES);
+      localStorage.setItem(POPO_MODES_VERSION_KEY, String(SEED_MODE_VERSION));
       void emitCrossWebview(MODES_CHANGED_EVENT);
       return { modes: SEED_MODES };
     }),

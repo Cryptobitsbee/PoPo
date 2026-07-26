@@ -22,8 +22,8 @@ fn init_tracing() {
 
     // Default filter: info-level for our crate, warn for everything else.
     // Override at runtime with RUST_LOG env var (e.g. RUST_LOG=popo=debug).
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("popo=info,warn"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("popo=info,warn"));
 
     if cfg!(debug_assertions) {
         // Dev mode: write to stderr (the terminal running `pnpm tauri dev`).
@@ -35,12 +35,28 @@ fn init_tracing() {
             .with_line_number(false)
             .init();
     } else {
-        // Release mode: write to a file in %APPDATA%\popo\.
-        // Creates the directory if it doesn't exist.
-        let app_data = std::env::var("APPDATA")
-            .unwrap_or_else(|_| ".".to_string());
+        // Release mode: write to a bounded file in %APPDATA%\popo\.
+        // Rotate at launch once the active log reaches 5 MiB. Account
+        // deletion drops a marker so both generations are removed before
+        // the logger opens on the next launch.
+        let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
         let log_dir = std::path::PathBuf::from(&app_data).join("popo");
         let _ = std::fs::create_dir_all(&log_dir);
+        let log_path = log_dir.join("popo.log");
+        let old_path = log_dir.join("popo.log.old");
+        let clear_marker = log_dir.join(".clear-logs-on-next-start");
+
+        if clear_marker.exists() {
+            let _ = std::fs::remove_file(&log_path);
+            let _ = std::fs::remove_file(&old_path);
+            let _ = std::fs::remove_file(&clear_marker);
+        } else if std::fs::metadata(&log_path)
+            .map(|metadata| metadata.len() >= 5 * 1024 * 1024)
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_file(&old_path);
+            let _ = std::fs::rename(&log_path, &old_path);
+        }
 
         let file_appender = tracing_appender::rolling::never(&log_dir, "popo.log");
         let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
