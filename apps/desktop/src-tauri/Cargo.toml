@@ -59,7 +59,7 @@ serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Paste mechanic + clipboard. Wired in Phase 2 item [7].
-enigo   = "0.2"
+enigo   = "0.6"
 arboard = "3"
 
 # Win32 bindings. Phase 2 [6,7] add more feature flags as needed.
