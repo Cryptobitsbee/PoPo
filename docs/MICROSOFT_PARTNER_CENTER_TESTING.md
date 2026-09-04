@@ -34,13 +34,14 @@ Do not substitute `ai.popo.desktop`: that is PoPo's Tauri identifier, not the id
 
 ### 2. Correct the desktop OAuth build configuration
 
-Before building, `apps/desktop/.env.local` must contain a Google OAuth client created as **Desktop app**:
+Before building, `apps/desktop/.env.local` must contain both values from the same Google OAuth client created as **Desktop app**:
 
 ```env
 VITE_GOOGLE_DESKTOP_CLIENT_ID=...apps.googleusercontent.com
+VITE_GOOGLE_DESKTOP_CLIENT_SECRET=...
 ```
 
-A Firebase/Web application client ID is not interchangeable. It produces Google's `client_secret is missing` token error. PoPo intentionally does not embed a client secret; replace the client ID with a Desktop app client and rebuild.
+PoPo's existing Desktop client registration requires its Google-issued credential during token exchange. Because Vite embeds it in the executable, that value is extractable public-client metadata—not a confidential authorization boundary. PKCE S256, random OAuth state, and the random loopback callback remain the per-attempt protections. Never substitute a Web/server client secret or commit `.env.local`.
 
 ### 3. Build the Partner Center package
 

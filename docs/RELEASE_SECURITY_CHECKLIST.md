@@ -53,7 +53,7 @@ Do not call an official build release-ready until all are resolved:
 
 Run against the exact release candidate, with DevTools disabled and production CSP/capabilities:
 
-- [ ] Google system-browser sign-in succeeds without a client secret; cancellation, wrong state, spoofed loopback request, timeout, and concurrent sign-in fail safely.
+- [ ] Google system-browser sign-in succeeds with the matched Desktop client ID/issued credential plus PKCE; cancellation, wrong state, spoofed loopback request, timeout, and concurrent sign-in fail safely. Confirm the embedded Desktop credential is treated as extractable metadata, never a confidential security boundary.
 - [ ] Sign-out/sign-in persistence and Firebase token refresh work.
 - [ ] Speech-to-Text dictation works with auto and explicit languages.
 - [ ] AI Studio Gemini works and the key survives restart via DPAPI without appearing in local storage/logs.

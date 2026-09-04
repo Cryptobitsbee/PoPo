@@ -16,7 +16,7 @@ PoPo must still **not** be presented as a signed production release until the ow
 
 ### OAuth and Firebase authentication
 
-- Removed all desktop OAuth client-secret requirements. Installed applications cannot keep a client secret confidential.
+- Restored the Google-issued Desktop client credential required by PoPo's existing registration. A value embedded in a distributed desktop executable is extractable and is not treated as a security boundary; PKCE S256, state, and the loopback callback protections provide per-attempt binding.
 - Uses system-browser authorization code flow, PKCE S256, independent cryptographic state, random `127.0.0.1` port, exact callback-state validation, bounded reads, connection/overall timeouts, and a concurrency guard.
 - Rust validates the exact Google authorization endpoint and required parameters before opening it through the Tauri opener plugin.
 - OAuth codes/errors are delivered only to the `main` webview. Callback HTML is static, no-store, framed/script/object denied, and embeds the tracked local Geist Pixel Square font.

@@ -131,9 +131,13 @@
 
 ## Session 64 — Installed OAuth, installer finish UI, and MSIX
 
-- [x] Classify Google's `client_secret is missing` as a Web-client build
-  mismatch and instruct the publisher to use a Desktop app OAuth client without
-  embedding a secret; raw unknown token descriptions are no longer shown.
+- [x] Trace `client_secret is missing` to `e0c63fa` removing the
+  Google-issued Desktop credential from the token POST even though the valid
+  matched value remained in ignored `.env.local`.
+- [x] Restore `VITE_GOOGLE_DESKTOP_CLIENT_SECRET` only for Google's token
+  request; retain PKCE S256, state, random loopback port, strict URL/callback
+  validation, and sanitized errors. Treat the distributed value as extractable
+  public-client metadata, never a confidentiality boundary.
 - [x] Browser callback now says authorization response received and makes token
   exchange completion explicit.
 - [x] Windows product, title, publisher, Start Menu, tray, installer, and

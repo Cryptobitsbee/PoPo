@@ -7,11 +7,17 @@
 **SESSION 64 — Installed OAuth diagnosis, PoPo installer polish, and MSIX packaging.**
 
 Completed:
-- Diagnosed the screenshot's `client_secret is missing` result: the build-time
-  value has valid client-ID syntax but is a Google **Web application** OAuth
-  client. PoPo's PKCE desktop flow correctly has no secret; token failures now
-  give safe actionable copy, and the loopback page no longer implies the
-  account is connected before token exchange.
+- Traced the screenshot's `client_secret is missing` result to a Session 61
+  regression, not a bad client ID. PoPo's valid Desktop client requires its
+  Google-issued Desktop credential in the token POST; the pre-hardening build
+  sent it, while `e0c63fa` removed the field. The ignored `.env.local` retained
+  both matched values. Compatibility is restored without logging/committing
+  either value; PKCE/state/random-loopback protections remain unchanged.
+- Corrected the temporary e2dabef error copy that falsely diagnosed a Web
+  client. The exact rebuilt standalone installer is 209,649,588 bytes, SHA-256
+  `0C4B8D4BD2D14F8E641EA73D4A721981B2310BD1D685C4F88EBEC961D04A00F6`,
+  `NotSigned`; its compiled frontend contains both configured Desktop fields,
+  the request sends `client_secret`, and Defender reported zero detections.
 - Corrected Windows display casing to `PoPo` for product/title/publisher, Start
   Menu, Installed Apps metadata, tray, installer output, and uninstall shortcut
   while preserving `ai.popo.desktop`, `popo.exe`, and existing data paths.
@@ -33,8 +39,8 @@ Completed:
   mandatory and case-sensitive.
 
 Owner inputs still required:
-- Replace `VITE_GOOGLE_DESKTOP_CLIENT_ID` with a real Google OAuth **Desktop
-  app** client ID and rebuild; application code cannot convert a Web client.
+- Runtime-test Google sign-in with a disposable account using the rebuilt
+  installer; both matched Desktop OAuth values are already configured.
 - Copy exact Partner Center `Identity/Name`, `Identity/Publisher`, and
   `PublisherDisplayName` into the ignored local identity file before creating
   the upload candidate. The special-OID local proof cannot be uploaded.
