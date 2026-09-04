@@ -179,15 +179,63 @@ interface GoogleTokenResponse {
   error_description?: string;
 }
 
+/**
+ * Convert Google's token response into stable, actionable UI copy.
+ *
+ * Google documents `client_secret` as optional for installed apps, but some
+ * existing Desktop client registrations (including PoPo's) reject exchanges
+ * without their issued client credential. That credential cannot be kept
+ * confidential in a distributed desktop app; PKCE remains the proof binding
+ * the authorization code to this sign-in attempt.
+ */
+export function describeGoogleTokenFailure(
+  status: number,
+  response: GoogleTokenResponse,
+): string {
+  const details = `${response.error ?? ""} ${response.error_description ?? ""}`
+    .trim()
+    .toLowerCase();
+
+  if (details.includes("client_secret") && details.includes("missing")) {
+    return (
+      "This PoPo build is missing its Google Desktop OAuth client " +
+      "credential. The publisher must restore " +
+      "VITE_GOOGLE_DESKTOP_CLIENT_SECRET and rebuild PoPo."
+    );
+  }
+
+  if (response.error === "invalid_grant") {
+    return "Google sign-in expired or was already used. Please try again.";
+  }
+
+  if (response.error === "invalid_client") {
+    return (
+      "Google rejected this build's Desktop OAuth client ID. Check the " +
+      "publisher OAuth configuration and rebuild PoPo."
+    );
+  }
+
+  return `Google sign-in could not finish (token exchange ${status}). Please try again.`;
+}
+
 async function signInWithSystemBrowser(): Promise<User> {
   if (!auth) throw new Error("Firebase not configured");
 
   const clientId = import.meta.env.VITE_GOOGLE_DESKTOP_CLIENT_ID?.trim();
+  const clientSecret =
+    import.meta.env.VITE_GOOGLE_DESKTOP_CLIENT_SECRET?.trim();
   if (!clientId) {
     throw new Error(
       "Desktop OAuth client ID missing. Add VITE_GOOGLE_DESKTOP_CLIENT_ID " +
         "to apps/desktop/.env.local (create one at console.cloud.google.com " +
         "→ APIs & Services → Credentials → Create OAuth client → Desktop app).",
+    );
+  }
+  if (!clientSecret) {
+    throw new Error(
+      "Desktop OAuth client credential missing. Restore " +
+        "VITE_GOOGLE_DESKTOP_CLIENT_SECRET in apps/desktop/.env.local " +
+        "from the same Google Desktop OAuth client, then rebuild PoPo.",
     );
   }
 
@@ -271,13 +319,16 @@ async function signInWithSystemBrowser(): Promise<User> {
   // 6. Wait for and validate the loopback callback.
   const code = await callbackPromise;
 
-  // 7. Exchange the code. Google documents client_secret as optional for
-  //    installed-app token exchange; embedding one would not make it secret.
+  // 7. Exchange the code. Google labels this Desktop-client value a
+  //    `client_secret`, but a credential shipped in a native executable is
+  //    extractable and is not a confidentiality/security boundary. This
+  //    registration requires the field; PKCE binds the code to this process.
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: clientId,
+      client_secret: clientSecret,
       code,
       code_verifier: verifier,
       grant_type: "authorization_code",
@@ -289,11 +340,7 @@ async function signInWithSystemBrowser(): Promise<User> {
     .json()
     .catch(() => ({}))) as GoogleTokenResponse;
   if (!tokenResponse.ok || tokens.error) {
-    throw new Error(
-      tokens.error_description ||
-        tokens.error ||
-        `Token exchange failed (${tokenResponse.status}).`,
-    );
+    throw new Error(describeGoogleTokenFailure(tokenResponse.status, tokens));
   }
   if (!tokens.id_token) {
     throw new Error("Token response had no id_token");

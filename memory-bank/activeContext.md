@@ -4,6 +4,140 @@
 
 ## Current phase
 
+**SESSION 64 — Installed OAuth diagnosis, PoPo installer polish, and MSIX packaging.**
+
+Completed:
+- Traced the screenshot's `client_secret is missing` result to a Session 61
+  regression, not a bad client ID. PoPo's valid Desktop client requires its
+  Google-issued Desktop credential in the token POST; the pre-hardening build
+  sent it, while `e0c63fa` removed the field. The ignored `.env.local` retained
+  both matched values. Compatibility is restored without logging/committing
+  either value; PKCE/state/random-loopback protections remain unchanged.
+- Corrected the temporary e2dabef error copy that falsely diagnosed a Web
+  client. The exact rebuilt standalone installer is 209,649,588 bytes, SHA-256
+  `0C4B8D4BD2D14F8E641EA73D4A721981B2310BD1D685C4F88EBEC961D04A00F6`,
+  `NotSigned`; its compiled frontend contains both configured Desktop fields,
+  the request sends `client_secret`, and Defender reported zero detections.
+- Corrected Windows display casing to `PoPo` for product/title/publisher, Start
+  Menu, Installed Apps metadata, tray, installer output, and uninstall shortcut
+  while preserving `ai.popo.desktop`, `popo.exe`, and existing data paths.
+- Defined Tauri's missing NSIS `createDesktop` LangString. The second checked
+  finish control in the screenshot is now labeled `Create a desktop shortcut`.
+- Corrected the custom NSIS hook to enrich Tauri's actual PRODUCTNAME uninstall
+  key and remove the historical duplicate `ai.popo.desktop` metadata key.
+- Added `scripts/build-msix.ps1`, `tauri:build:msix`, and
+  `tauri:build:msix:test`. MakeAppx builds/unpacks/verifies x64 packaged-classic
+  PoPo with exact-size Store assets and SHA-256 sidecar.
+- Final local proofs: standalone `PoPo_0.1.0_x64-setup.exe` is 209,647,693
+  bytes, SHA-256 `D5F95DE3E9270866C6CFF2D2021505FA0434D3EA223B5C62284BB45EEE9418F3`;
+  special-OID `PoPo_1.0.0.0_x64_LocalTest.msix` is 4,021,083 bytes, SHA-256
+  `F7545EA5E0F0040E5C3AE66A70193B2700413EF0899374D9FE6C10DF88A5EEB4`.
+  Both are `NotSigned`; current Defender reported zero detections for both.
+- Reworked `docs/MICROSOFT_PARTNER_CENTER_TESTING.md`: Store MSIX may be
+  submitted unsigned and Microsoft re-signs it after certification; EXE still
+  requires owner signing. Exact Partner Center product identity remains
+  mandatory and case-sensitive.
+
+Owner inputs still required:
+- Runtime-test Google sign-in with a disposable account using the rebuilt
+  installer; both matched Desktop OAuth values are already configured.
+- Copy exact Partner Center `Identity/Name`, `Identity/Publisher`, and
+  `PublisherDisplayName` into the ignored local identity file before creating
+  the upload candidate. The special-OID local proof cannot be uploaded.
+- Run packaged OAuth/hotkey/microphone/startup/uninstall and WACK tests on clean
+  disposable Windows 10/11 environments before submission.
+
+Next feature after the subscription renews: #5 audio recovery after crash.
+
+### Previous session context
+
+**SESSION 63 — Canonical GitHub migration and Microsoft Partner Center proof build.**
+
+Completed:
+- Canonical remote and tracked repository/release/security URLs now use
+  `https://github.com/Cryptobitsbee/PoPo`; no old canonical URL remains.
+- Session 62 microphone work plus Store packaging was committed as `3e02dc4`
+  (`Improve microphone errors and Store packaging`) and pushed to
+  `origin/feature/better-mic-errors`; local/upstream hashes match.
+- Added `tauri.store.conf.json` and `pnpm --filter desktop
+  tauri:build:store`. The Store overlay changes WebView2 to
+  `offlineInstaller`, satisfying Microsoft's standalone-installer rule without
+  making normal development/direct builds permanently 200 MiB.
+- Added `docs/MICROSOFT_PARTNER_CENTER_TESTING.md` with exact Partner Center
+  EXE fields, `/S`, versioned GitHub Release URL pattern, privacy/support
+  handoff, signature checks, and private-flight sequence.
+
+Verified local proof build from `3e02dc4`:
+- `popo.exe`: 0.1.0, 7.60 MiB, SHA-256
+  `3717843CC12486EA95439DCBA194F62E349142F403065C8A07A8484F5C8A3AC4`,
+  `NotSigned`.
+- `popo_0.1.0_x64-setup.exe`: 199.94 MiB (209,649,076 bytes), SHA-256
+  `A17F9B56E977D8F7EB2F91B83371D81FCF5FA2A2BAC19F47DAF5EFDF830B9D47`,
+  `NotSigned`.
+- Generated NSIS confirms `offlineInstaller`, embeds the x64 WebView2 runtime,
+  invokes it with `/silent /install`, and supports Store installer parameter
+  `/S`.
+- Current Microsoft Defender signature `1.455.353.0` (age 0) reported zero
+  detections for the exact installer. A `.sha256` sidecar is stored beside the
+  ignored artifact.
+
+Hard blocker before Partner Center EXE upload:
+- Microsoft requires the installer and every installed PE (including
+  `popo.exe`) to have a trusted code-signing chain. Both are currently
+  `NotSigned`; complete publisher/signing identity, sign+timestamp inner EXE,
+  rebuild, sign+timestamp installer, verify, re-scan, then host at an immutable
+  versioned HTTPS URL. The present file is for local proof/testing only.
+
+Next feature after the subscription renews: #5 audio recovery after crash.
+
+### Previous session context
+
+**SESSION 62 — Actionable microphone errors (#18).**
+
+Baseline handoff:
+- Session 61 was committed as `e0c63fa` (`Harden security and release
+  readiness`) and pushed to `origin/session-61-security-hardening`; local and
+  remote hashes matched. GitHub redirected the old `Ganesh540-crypto/PoPo`
+  remote to `Cryptobitsbee/PoPo`.
+- Session 62 was later committed and pushed on `feature/better-mic-errors` as
+  `3e02dc4`, together with the canonical URL migration and Store profile.
+
+Completed implementation:
+- Added `audio/mic_error.rs` with stable unplugged, in-use,
+  permission-blocked, unsupported-config, and unknown categories across every
+  CPAL enumeration/default-config/build/play/runtime variant.
+- Passively classifies known WASAPI HRESULTs. No exclusive-mode probe is used:
+  such a probe can fail while shared capture works and would create false busy
+  errors.
+- Explicit selected microphones now fail as unavailable when missing rather
+  than silently switching to the system default.
+- Runtime stream failures persist atomically in `CaptureDiagnostics` so an
+  unplug during recording is not mislabeled as silence/short input.
+- Removed microphone names and raw backend details from capture error logs and
+  pill payloads. The Test page receives the same fixed user copy.
+- Extended `PillErrorPayload` with a closed `openMicSettings` action. The pill
+  receives exactly one custom command, `cmd_open_mic_settings`; it takes no URL
+  and opens only the compile-time Windows microphone privacy URI.
+- `ErrorTooltip` keeps the action inline within the fixed 260×110 host and
+  supports click, Enter/Space, persistent state, `aria-busy`, and retry copy.
+- Updated `docs/ROADMAP.md` #18 and the event/IPC architecture invariant.
+
+Validation evidence:
+- 28 Rust tests pass, including CPAL variants, WASAPI permission/busy HRESULTs,
+  no raw-detail leakage, payload serialization, and pill/unknown IPC gates.
+- Rust release check passes; frontend typecheck/production build passes with
+  5,073 modules; Tauri config/capabilities parse. The existing project-local
+  Tauri watcher rebuilt `target/debug/popo.exe` after the final Rust edits and
+  restarted it successfully; the process remained alive.
+- Independent focused reviewer returned `APPROVED` with no blocking finding.
+- Manual unplug/exclusive-owner/Windows-permission/muted-device tests remain a
+  real-hardware release matrix, not an automated claim.
+
+Next: #5 audio recovery after crash. Preserve the Session 61 security
+boundaries while adding recovery persistence and startup UX.
+
+### Previous session context
+
 **SESSION 61 — Security, privacy, open-source configuration, and Windows release trust hardening.**
 
 Completed implementation:
@@ -76,7 +210,8 @@ Owner/manual release actions still required:
    sign/timestamp, verify, Defender-scan, hash, and publish only reviewed
    artifacts. See the release checklist.
 
-No commit was created. The large Sessions 58–60 working tree remains preserved.
+Session 61 was subsequently committed and pushed as `e0c63fa` on
+`session-61-security-hardening`. Sessions 58–60 remained preserved.
 
 ### Previous session context
 

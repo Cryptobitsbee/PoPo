@@ -129,6 +129,77 @@
 
 ## Pending / Polish
 
+## Session 64 — Installed OAuth, installer finish UI, and MSIX
+
+- [x] Trace `client_secret is missing` to `e0c63fa` removing the
+  Google-issued Desktop credential from the token POST even though the valid
+  matched value remained in ignored `.env.local`.
+- [x] Restore `VITE_GOOGLE_DESKTOP_CLIENT_SECRET` only for Google's token
+  request; retain PKCE S256, state, random loopback port, strict URL/callback
+  validation, and sanitized errors. Treat the distributed value as extractable
+  public-client metadata, never a confidentiality boundary.
+- [x] Browser callback now says authorization response received and makes token
+  exchange completion explicit.
+- [x] Windows product, title, publisher, Start Menu, tray, installer, and
+  uninstall display casing is `PoPo`; stable internal identifiers remain.
+- [x] Blank checked NSIS finish row fixed as `Create a desktop shortcut`.
+- [x] Stale duplicate uninstall metadata key removed; hook now enriches Tauri's
+  actual PRODUCTNAME key.
+- [x] Manual MakeAppx MSIX pipeline implemented with exact identity validation,
+  exact-size assets, unpack verification, SHA-256 sidecar, and separate local
+  special-OID versus Partner Center modes.
+- [x] Local unsigned x64 proof builds and verifies as `PoPo.LocalTest`; it is
+  deliberately not an upload candidate.
+- [ ] Owner: create/select a Google OAuth **Desktop app** client, update ignored
+  `.env.local`, rebuild, and test sign-in with a disposable account.
+- [ ] Owner: reserve/open the Partner Center product and copy the exact
+  case-sensitive Name, Publisher, and PublisherDisplayName into the ignored
+  identity file; then build the unsigned Store MSIX.
+- [ ] Run WACK and full packaged-app behavior on disposable clean Windows 10/11
+  environments before private submission.
+
+## Session 63 — GitHub identity and Partner Center proof build
+
+- [x] Origin and canonical tracked URLs migrated to
+  `https://github.com/Cryptobitsbee/PoPo`.
+- [x] #18 + Store profile committed/pushed as `3e02dc4` on
+  `feature/better-mic-errors` with matching upstream hash.
+- [x] Dedicated `tauri:build:store` embeds the WebView2 offline runtime; normal
+  builds retain the smaller download-bootstrapper profile.
+- [x] Standalone x64 NSIS build passed: 0.1.0, 209,649,076 bytes, SHA-256
+  `A17F9B56E977D8F7EB2F91B83371D81FCF5FA2A2BAC19F47DAF5EFDF830B9D47`.
+- [x] Generated NSIS verifies offline WebView2 plus `/silent /install`; Store
+  silent parameter is `/S`.
+- [x] Defender current signature `1.455.353.0` found zero detections.
+- [x] Partner Center field/signing/private-test handoff documented.
+- [ ] Upload blocker: inner `popo.exe` and installer both verify `NotSigned`;
+  Microsoft requires every installed PE and installer to chain to a trusted
+  code-signing certificate. Owner must sign/timestamp, verify, re-scan, and
+  host the immutable versioned EXE before submission.
+- [ ] After subscription renewal: #5 audio recovery after crash.
+
+## Session 62 — Actionable microphone errors (#18)
+
+- [x] Structured every CPAL microphone-open/runtime error into stable unplugged,
+  in-use, permission, unsupported-config, or unknown categories.
+- [x] Recognize WASAPI access-denied/device-in-use HRESULTs without unreliable
+  exclusive-mode preflight probes.
+- [x] Explicit missing selected devices fail closed instead of silently using a
+  different default microphone.
+- [x] Runtime stream failures survive in capture diagnostics until release;
+  no-callback and low-signal cases have distinct copy.
+- [x] Raw backend errors and microphone names are excluded from pill payloads
+  and release logs.
+- [x] Permission/no-callback tooltips expose one fixed **Open settings** action;
+  the pill can invoke only `cmd_open_mic_settings`, whose URI is compile-time.
+- [x] Action is inline, keyboard-operable, persistent, and fits the fixed pill
+  host without dynamic resize.
+- [x] Validation: 28 Rust tests, release check/format, frontend typecheck/build,
+  Tauri config parse, diff hygiene, and independent review pass.
+- [ ] Manual release matrix: unplugged USB mic, truly exclusive endpoint,
+  Windows desktop-mic permission off, muted/no-callback, and unsupported config.
+- [ ] Next: #5 audio recovery after crash.
+
 ## Session 61 — Security and release-readiness hardening
 
 - [x] Desktop OAuth now uses system browser + PKCE S256 + random state +
@@ -177,10 +248,10 @@
 - [ ] Next batch: current-release closeout (runtime switcher visual/interaction
   smoke, stale-doc reconciliation, dead pending-switcher Rust cleanup, fresh
   release installer build and smoke test).
-- [ ] Then complete continuously: #18 mic errors → #5 crash recovery → #10
-  vocabulary + #17 usage telemetry + #15 stats → #2 voice commands → #1
-  transforms → #3 context-aware dictation + #6 continue thought → production
-  updater/signing/Windows validation and later offline fallback.
+- [ ] Continue continuously: #5 crash recovery → #10 vocabulary + #17 usage
+  telemetry + #15 stats → #2 voice commands → #1 transforms → #3
+  context-aware dictation + #6 continue thought → production updater/signing/
+  Windows validation and later offline fallback.
 
 ## Session 59 — Runtime locale, Vertex location, and disabled-mode UX
 

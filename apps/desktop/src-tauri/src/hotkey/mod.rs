@@ -32,6 +32,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, ShortcutState};
 
 use crate::audio::capture::SafeStream;
+use crate::audio::mic_error::{MicCaptureError, MicErrorKind};
 use crate::audio::{self, processor};
 use crate::focus;
 use crate::gcp::{self, auth::Authenticator, GcpConfig};
@@ -441,13 +442,9 @@ pub struct RecordingSession {
     samples: Arc<Mutex<VecDeque<f32>>>,
     sample_rate: u32,
     /// Live diagnostic counters from the audio capture stream. Read
-    /// in `on_release` when a recording is rejected for low amplitude
-    /// to build a specific error message that names the device and
-    /// shows the actual peak level cpal saw. Session 43.
+    /// in `on_release` to distinguish runtime disconnects, a stream
+    /// with no callbacks, and audio that was delivered but too quiet.
     capture_diag: Arc<crate::audio::capture::CaptureDiagnostics>,
-    /// Human-readable device name as cpal reported it. Used in the
-    /// pill error tooltip when no audio reaches the buffer.
-    capture_device_name: String,
     /// Unix timestamp (ms) when this recording session started.
     /// Used to compute durationMs in the session:created event.
     started_at_ms: u64,
@@ -614,7 +611,10 @@ pub fn on_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
                     let _ = app.emit_to(
                         "pill",
                         "pill:state:error",
-                        ErrorPayload::error("press_failed", format!("{e}")),
+                        ErrorPayload::error(
+                            "press_failed",
+                            "Dictation could not start. Try again.",
+                        ),
                     );
                 }
             }
@@ -653,7 +653,10 @@ pub fn on_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
                     let _ = app.emit_to(
                         "pill",
                         "pill:state:error",
-                        ErrorPayload::error("press_failed", format!("{e}")),
+                        ErrorPayload::error(
+                            "press_failed",
+                            "Dictation could not start. Try again.",
+                        ),
                     );
                 }
             }
@@ -663,6 +666,12 @@ pub fn on_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
             }
         }
     });
+}
+
+#[derive(Serialize, Clone)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ErrorAction {
+    OpenMicSettings { label: String },
 }
 
 #[derive(Serialize, Clone)]
@@ -679,35 +688,74 @@ struct ErrorPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     severity: Option<String>,
     /// When true the frontend keeps the tooltip visible until the user
-    /// clicks it or Rust emits `pill:state:error:clear`. Used for
-    /// blocking status notices (GCP not configured) that should stay
-    /// on screen until the underlying condition is resolved.
+    /// clicks it or Rust emits `pill:error:clear`. Used for
+    /// blocking status notices (GCP not configured) and actionable
+    /// microphone errors that must remain clickable.
     #[serde(skip_serializing_if = "Option::is_none")]
     persistent: Option<bool>,
+    /// A fixed, reviewed action. The frontend never receives a URL or
+    /// command name from Rust, only this closed enum.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<ErrorAction>,
 }
 
 impl ErrorPayload {
-    /// Red-border, Windows-toast-firing, pill-flips-to-error variant.
-    /// Use for any real failure in the dictation pipeline.
+    /// Red-border pill failure. Use for any real dictation-pipeline error.
     fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
             severity: None,
             persistent: None,
+            action: None,
         }
     }
 
-    /// Neutral-border, toast-suppressed, state-preserving variant.
-    /// Use for soft hints that accompany a normal flow — e.g. the
-    /// "finish GCP setup" nudge after a fake-transcribe paste. Auto-
-    /// dismisses after ~10 s.
+    /// Build consistent microphone copy from the stable category. Windows
+    /// privacy failures remain visible because their fixed settings action
+    /// must be clickable; other categories use the normal 10-second hold.
+    fn microphone(kind: MicErrorKind) -> Self {
+        let action =
+            (kind == MicErrorKind::PermissionBlocked).then(|| ErrorAction::OpenMicSettings {
+                label: "Open settings".into(),
+            });
+        Self {
+            code: kind.code().into(),
+            message: kind.user_message().into(),
+            severity: None,
+            persistent: action.as_ref().map(|_| true),
+            action,
+        }
+    }
+
+    fn from_capture_error(error: &MicCaptureError) -> Self {
+        Self::microphone(error.kind())
+    }
+
+    /// A microphone stream opened but delivered no callback data. Do not
+    /// claim permission is definitely blocked; give a precise description
+    /// and a direct path to inspect Windows access controls.
+    fn microphone_no_data() -> Self {
+        Self {
+            code: "mic_no_data".into(),
+            message: "No audio reached popo. Check Windows microphone access or pick another mic."
+                .into(),
+            severity: None,
+            persistent: Some(true),
+            action: Some(ErrorAction::OpenMicSettings {
+                label: "Open settings".into(),
+            }),
+        }
+    }
+
+    /// Neutral-border, state-preserving hint. Auto-dismisses after ~10 s.
     fn info(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
             severity: Some("info".into()),
             persistent: None,
+            action: None,
         }
     }
 }
@@ -835,15 +883,23 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
         .lock()
         .ok()
         .and_then(|g| g.clone());
-    let capture = audio::capture::start(selected_mic.as_deref())?;
+    let capture = match audio::capture::start(selected_mic.as_deref()) {
+        Ok(capture) => capture,
+        Err(error) => {
+            tracing::warn!("microphone open failed: {}", error.code());
+            let _ = app.emit_to(
+                "pill",
+                "pill:state:error",
+                ErrorPayload::from_capture_error(&error),
+            );
+            return Ok(());
+        }
+    };
     let sample_rate = capture.sample_rate;
     let samples = capture.samples.clone();
-    // Capture diagnostics: shared with the audio callback so we can
-    // build informative error messages downstream ("max signal: 0.001
-    // from Microphone Array") without round-tripping through the
-    // ring buffer. Session 43.
+    // Capture diagnostics are shared with the audio callback so release can
+    // distinguish disconnect, no-callback, and low-signal failures.
     let capture_diag = capture.diag.clone();
-    let capture_device_name = capture.device_name.clone();
 
     // 3. Spin up a 25 Hz waveform-emitter task. Runs until `running` flips.
     let running = Arc::new(AtomicBool::new(true));
@@ -914,7 +970,6 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
             samples: samples.clone(),
             sample_rate,
             capture_diag,
-            capture_device_name,
             started_at_ms: unix_now_ms(),
             running: running.clone(),
             foreground_hwnd,
@@ -2021,7 +2076,6 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
         forced_mode_id,
         matched_mode_id,
         capture_diag,
-        capture_device_name,
     ) = {
         let session_opt = {
             let state = app.state::<PopoState>();
@@ -2069,7 +2123,6 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             session.forced_mode_id,
             session.matched_mode_id,
             session.capture_diag,
-            session.capture_device_name,
         )
     };
 
@@ -2128,10 +2181,18 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
         let samples_count = capture_diag.samples_written.load(Ordering::Relaxed);
         let peak_pre = capture_diag.peak_pre_agc();
         let peak_post = capture_diag.peak_post_agc();
+        let stream_error_kind = capture_diag.stream_error_kind();
         tracing::info!(
-            "on_release: skipping transcribe (duration={}ms max_amp={:.4} too_short={} too_quiet={}) | device={} callbacks={} samples_written={} peak_pre_agc={:.4} peak_post_agc={:.4}",
-            duration_ms, max_amp, too_short, too_quiet,
-            capture_device_name, cb_count, samples_count, peak_pre, peak_post
+            "on_release: skipping transcribe (duration={}ms max_amp={:.4} too_short={} too_quiet={}) | callbacks={} samples_written={} peak_raw={:.4} peak_boosted={:.4} stream_error={:?}",
+            duration_ms,
+            max_amp,
+            too_short,
+            too_quiet,
+            cb_count,
+            samples_count,
+            peak_pre,
+            peak_post,
+            stream_error_kind
         );
         // Kill streaming cleanly so GCP releases the recognizer slot.
         if let Some(handle) = streaming_handle {
@@ -2140,34 +2201,20 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
         if let Some(forwarder) = chunk_forwarder {
             forwarder.abort();
         }
-        // Build a specific error message. Three cases:
-        //   - too_short: simple guard, no need to mention audio.
-        //   - too_quiet + zero callbacks: cpal opened the device but
-        //     the audio thread never delivered a single buffer. The
-        //     device's default config is broken or the OS is gating
-        //     it. Tell the user explicitly.
-        //   - too_quiet + callbacks fired: the device DID deliver
-        //     audio but it was too quiet (mic muted, mic far from
-        //     mouth, gain too low). Show the actual peak so they can
-        //     see whether it's near silence (≈0.0) or near threshold.
-        let reason: String = if too_short {
-            "Too short — hold longer".to_string()
+
+        let payload = if let Some(kind) = stream_error_kind {
+            ErrorPayload::microphone(kind)
+        } else if too_short {
+            ErrorPayload::info("recording_too_short", "Too short. Hold the hotkey longer.")
         } else if cb_count == 0 {
-            format!(
-                "No audio from {} — the device opened but delivered nothing. Try a different mic in Settings.",
-                capture_device_name
-            )
+            ErrorPayload::microphone_no_data()
         } else {
-            format!(
-                "No speech detected from {} (signal {:.3}, raw {:.4}). Check mic isn't muted, or pick a different mic in Settings.",
-                capture_device_name, peak_post, peak_pre
+            ErrorPayload::error(
+                "mic_too_quiet",
+                "No speech detected. Unmute your microphone or pick another in Settings.",
             )
         };
-        let _ = app.emit_to(
-            "pill",
-            "pill:state:error",
-            ErrorPayload::info("no_speech", &reason),
-        );
+        let _ = app.emit_to("pill", "pill:state:error", payload);
         tokio::time::sleep(Duration::from_millis(900)).await;
         let _ = app.emit_to("pill", "pill:state:sleep", ());
         return Ok(());
@@ -2942,4 +2989,34 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod mic_error_payload_tests {
+    use super::{ErrorPayload, MicErrorKind};
+
+    #[test]
+    fn permission_error_serializes_fixed_settings_action() {
+        let value = serde_json::to_value(ErrorPayload::microphone(MicErrorKind::PermissionBlocked))
+            .expect("microphone payload should serialize");
+
+        assert_eq!(value["code"], "mic_permission_blocked");
+        assert_eq!(value["persistent"], true);
+        assert_eq!(value["action"]["kind"], "openMicSettings");
+        assert_eq!(value["action"]["label"], "Open settings");
+    }
+
+    #[test]
+    fn unplugged_error_has_actionable_copy_without_an_ipc_action() {
+        let value = serde_json::to_value(ErrorPayload::microphone(MicErrorKind::Unplugged))
+            .expect("microphone payload should serialize");
+
+        assert_eq!(value["code"], "mic_unplugged");
+        assert!(value["message"]
+            .as_str()
+            .expect("message should be text")
+            .contains("pick another in Settings"));
+        assert!(value.get("action").is_none());
+        assert!(value.get("persistent").is_none());
+    }
 }

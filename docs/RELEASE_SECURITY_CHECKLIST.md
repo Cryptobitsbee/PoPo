@@ -53,7 +53,7 @@ Do not call an official build release-ready until all are resolved:
 
 Run against the exact release candidate, with DevTools disabled and production CSP/capabilities:
 
-- [ ] Google system-browser sign-in succeeds without a client secret; cancellation, wrong state, spoofed loopback request, timeout, and concurrent sign-in fail safely.
+- [ ] Google system-browser sign-in succeeds with the matched Desktop client ID/issued credential plus PKCE; cancellation, wrong state, spoofed loopback request, timeout, and concurrent sign-in fail safely. Confirm the embedded Desktop credential is treated as extractable metadata, never a confidential security boundary.
 - [ ] Sign-out/sign-in persistence and Firebase token refresh work.
 - [ ] Speech-to-Text dictation works with auto and explicit languages.
 - [ ] AI Studio Gemini works and the key survives restart via DPAPI without appearing in local storage/logs.
@@ -61,7 +61,7 @@ Run against the exact release candidate, with DevTools disabled and production C
 - [ ] Firestore session/settings/modes/snippets/dictionary/icon sync works across two devices/accounts as expected.
 - [ ] Optional audio local save, cloud upload, authenticated playback, legacy playback, and deletion work.
 - [ ] History export permits only the user-approved `.json`/`.txt` save path.
-- [ ] Main, pill, and Quick Switcher behavior works under split capabilities; pill/unknown webviews cannot invoke custom app commands, and OAuth/session/test events reach only their intended webviews.
+- [ ] Main, pill, and Quick Switcher behavior works under split capabilities; the pill can invoke only the fixed no-argument `cmd_open_mic_settings`, unknown webviews cannot invoke app commands, and OAuth/session/test events reach only their intended webviews.
 - [ ] Push-to-talk, toggle, silence stop, clipboard restore, per-app paste overrides, mode hotkeys, tray, autostart, wake/single-instance behavior, uninstall, and the paste-target matrix pass.
 - [ ] CSP causes no unexpected blocked Firebase/OAuth/audio/font requests and permits no unexpected remote script/frame/object/form load.
 - [ ] Account deletion is retried after simulated network interruption and Firebase recent-login failure.

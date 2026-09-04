@@ -6,5 +6,6 @@
 // that degraded both playback quality and STT accuracy.
 
 pub mod capture;
+pub mod mic_error;
 pub mod processor;
 pub mod storage;

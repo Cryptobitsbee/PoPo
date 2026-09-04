@@ -75,14 +75,23 @@ All pill state lives in Rust. React only listens and renders.
 - Capability JSON restricts plugin/core APIs, and `custom_command_allowed()`
   independently gates all registered app commands: `main` may call app
   commands; `switcher` may call only mode-binding, prompt, and hide commands;
-  `pill`/unknown labels may call none.
+  `pill` may call only `cmd_open_mic_settings`, which accepts no URL and opens
+  the compile-time `ms-settings:privacy-microphone` URI; unknown labels may
+  call none.
 - Every new custom command or event must update this origin model and tests.
 
 
 - `pill:state:processing`  — payload `{}`
 - `pill:state:success`     — payload `{}`
-- `pill:state:error`       — payload `{ code: string, message: string }`
+- `pill:state:error`       — payload `{ code, message, severity?, persistent?, action? }`; `action` is a closed enum, never an arbitrary URL/command
 - `pill:waveform`          — payload `{ bars: number[16] }` every ~40ms during Recording
+
+Microphone failures are classified in `audio/mic_error.rs` from concrete CPAL
+variants plus known WASAPI HRESULTs. Explicit selected devices fail closed if
+missing instead of silently falling back. Runtime stream failures persist in
+`CaptureDiagnostics` until release. Do not add an exclusive-mode preflight:
+it can fail for healthy shared-mode endpoints and create false busy errors.
+Raw backend strings and microphone names must not enter pill payloads/logs.
 
 The React `pillStore` (Zustand) is a thin reducer over these events.
 

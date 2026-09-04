@@ -19,7 +19,7 @@
       "allow": [
         { "url": "https://console.cloud.google.com/**" },
         { "url": "https://aistudio.google.com/app/apikey" },
-        { "url": "https://github.com/Ganesh540-crypto/PoPo/releases**" }
+        { "url": "https://github.com/Cryptobitsbee/PoPo/releases**" }
       ]
     }
   ]

@@ -43,7 +43,7 @@ and `memory-bank/progress.md`.
 ### Download
 
 When a signed public release is published, obtain it only from the
-[official Releases page](https://github.com/Ganesh540-crypto/PoPo/releases)
+[official Releases page](https://github.com/Cryptobitsbee/PoPo/releases)
 or the verified Microsoft Store listing. Verify the publisher/signature and
 published SHA-256 hash before running a direct-download installer. The
 installer:

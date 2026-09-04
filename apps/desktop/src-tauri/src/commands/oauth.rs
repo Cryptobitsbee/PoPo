@@ -131,8 +131,8 @@ const CALLBACK_HTML_TEMPLATE: &str = concat!(
           stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
-    <h1>Authentication response received</h1>
-    <p class="sub">Return to popo to finish sign-in.<br>If anything failed, popo will explain why.</p>
+    <h1>Authorization response received</h1>
+    <p class="sub">Return to PoPo to finish sign-in.<br>Your account is connected only after PoPo completes the secure token exchange.</p>
     <p class="hint">You can close this tab</p>
   </div>
 </body>

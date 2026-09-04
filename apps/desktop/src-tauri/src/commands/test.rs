@@ -102,8 +102,8 @@ pub fn cmd_test_dictate_start(
         }
     });
 
-    let capture =
-        audio::capture::start(mic_name.as_deref()).map_err(|e| format!("mic open failed: {e}"))?;
+    let capture = audio::capture::start(mic_name.as_deref())
+        .map_err(|error| error.user_message().to_string())?;
 
     let samples = capture.samples.clone();
     let sample_rate = capture.sample_rate;

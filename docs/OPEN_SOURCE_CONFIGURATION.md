@@ -13,15 +13,16 @@ The app initializes Firebase only when **all** required `VITE_FIREBASE_*` values
 
 ## What is public and what is secret
 
-Safe to embed as public client identifiers:
+Safe to embed as public/extractable client metadata:
 
 - Firebase web `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId`, and `appId`;
 - the Google OAuth **Desktop app** client ID;
+- the Google-issued Desktop client `secret` when that registration requires it—the value is extractable from every distributed executable and is never treated as a security boundary;
 - Firestore database ID.
 
 Never embed or put in any `VITE_*` variable:
 
-- OAuth client secrets (installed desktop apps cannot keep one confidential and PoPo does not use one);
+- a confidential Web/server OAuth client secret;
 - GCP service-account JSON/private keys;
 - Gemini/Google AI Studio API keys;
 - Firebase Admin SDK credentials;
@@ -56,11 +57,12 @@ In the same Google Cloud/Firebase project:
 
 1. Configure the OAuth consent screen/Google Auth Platform branding and test users as appropriate.
 2. Create **OAuth client ID → Desktop app**.
-3. Set only the public client ID:
+3. Set the client ID and the Google-issued Desktop client credential from that same registration:
    ```env
    VITE_GOOGLE_DESKTOP_CLIENT_ID=123456789-example.apps.googleusercontent.com
+   VITE_GOOGLE_DESKTOP_CLIENT_SECRET=desktop-client-credential
    ```
-4. Do not create or configure a client secret in PoPo.
+4. Do not confuse this with a confidential Web/server client secret. Vite embeds both Desktop values in the executable, so the Desktop credential is public client metadata; PKCE and state remain mandatory.
 
 PoPo uses the system browser, a random `127.0.0.1` port, OAuth state, and PKCE S256. The loopback redirect is generated at runtime. Production publishing/verification requirements in Google Cloud remain the operator's responsibility.
 
@@ -75,6 +77,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_FIREBASE_APP_ID=...
 VITE_FIRESTORE_DATABASE_ID=(default)
 VITE_GOOGLE_DESKTOP_CLIENT_ID=....apps.googleusercontent.com
+VITE_GOOGLE_DESKTOP_CLIENT_SECRET=...
 ```
 
 Then validate:
@@ -86,7 +89,7 @@ pnpm --filter desktop build
 cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
 ```
 
-`.env.local` is ignored. Do not use `VITE_GOOGLE_DESKTOP_CLIENT_SECRET`; PoPo intentionally has no such variable.
+`.env.local` is ignored. Never commit it or print either Desktop OAuth value in build/test logs. The Google-issued Desktop credential is still extractable from a distributed Vite bundle and must not be relied on for confidentiality or authorization.
 
 ## 4. Deploy and test rules before enabling users
 

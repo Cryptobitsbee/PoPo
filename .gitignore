@@ -23,6 +23,14 @@ target/
 popo-flow.json
 **/gcp-sa*.json
 **/service-account*.json
+
+# Account-specific Partner Center package identity input.
+**/partner-center-identity.local.json
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+
 **/firebase-adminsdk*.json
 **/*-credentials*.json
 **/*serviceAccount*.json

@@ -17,7 +17,7 @@ import type {
  *   pill:state:active     | {}
  *   pill:state:processing | {}
  *   pill:state:success    | {}
- *   pill:state:error      | { code, message }
+ *   pill:state:error      | { code, message, action? }
  *   pill:waveform         | { bars: number[16] }
  *
  * Listeners are registered in parallel on mount and torn down on unmount.

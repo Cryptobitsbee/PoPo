@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
-  "productName": "popo",
+  "productName": "PoPo",
   "version": "0.1.0",
   "identifier": "ai.popo.desktop",
   "build": {
@@ -14,7 +14,7 @@
       {
         "label": "main",
         "url": "/",
-        "title": "popo",
+        "title": "PoPo",
         "decorations": false,
         "transparent": false,
         "width": 1080,
@@ -44,7 +44,7 @@
       {
         "label": "switcher",
         "url": "/switcher",
-        "title": "popo mode switcher",
+        "title": "PoPo mode switcher",
         "width": 360,
         "height": 300,
         "transparent": true,
@@ -66,6 +66,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "PoPo",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -83,7 +84,7 @@
         "installerHooks": "assets/installer/hooks.nsh",
         "compression": "lzma",
         "installMode": "currentUser",
-        "startMenuFolder": "popo",
+        "startMenuFolder": "PoPo",
         "languages": ["English"],
         "customLanguageFiles": {
           "English": "assets/installer/English.nsh"
