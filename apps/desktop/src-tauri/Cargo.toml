@@ -28,7 +28,7 @@ tauri-plugin-single-instance = "2"
 # (Resampling is hand-rolled in gcp/chirp.rs; rubato was removed after
 # its FftFixedInOut chunk-size quirks caused runtime panics — see
 # Session 15 notes.)
-cpal = "0.15"
+cpal = "0.18"
 
 # GCP Speech-to-Text v2 gRPC. Phase 2 [6] polish: real Chirp streaming.
 #
