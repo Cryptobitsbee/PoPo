@@ -33,34 +33,97 @@
 
   /* ── Text ───────────────────────────────────────────── */
   /*
-   * Three-tier hierarchy on --bg-base (#0d0d0d):
+   * Three-tier hierarchy on --bg-base (#0d0d0d).
    *
-   *   --text-primary    #edebe6  ~16:1 contrast  (WCAG AAA)
-   *   --text-secondary  #7a786f   ~4.5:1         (WCAG AA body)
-   *   --text-ghost      #6a6862   ~3.4:1         (WCAG AA large)
+   * Ratios below are COMPUTED, not estimated (WCAG relative-luminance
+   * formula against #0d0d0d, whose luminance is 0.00403):
    *
-   * Session 55 retune: ghost was #3a3836 which gave a ~1.7:1
-   * ratio — well below WCAG's 3:1 floor for ANY readable text.
-   * That made sidebar icons, the v0.1 label, separator dots,
-   * empty states, and dropdown placeholders effectively invisible
-   * on the dark canvas. Bumped to #6a6862 — still clearly subordinate
-   * to secondary (4.5:1), but now passes WCAG AA Large (3:1) so
-   * users can actually see tertiary affordances.
+   *   --text-primary    #edebe6   ~16:1   WCAG AAA
+   *   --text-secondary  #9a978c   ~6.6:1  WCAG AA, comfortable
+   *   --text-ghost      #807e75   ~4.8:1  WCAG AA for normal text
    *
-   * Three-tier separation lets components encode importance:
+   * Session 66 retune. The previous values were measured and found to
+   * be below what their own comment claimed:
+   *
+   *   old secondary #7a786f = 4.39:1  (claimed ~4.5, actually FAILS AA)
+   *   old ghost     #6a6862 = 3.49:1  (AA Large only)
+   *
+   * That mattered because both were being used for SMALL text. WCAG's
+   * 3:1 allowance applies only to large text (18pt+, or 14pt bold);
+   * PoPo's ghost/secondary text is --text-xs (11px) and --text-2xs
+   * (10px), which need 4.5:1. So the version label, sidebar icons, the
+   * popo glyph, timestamps, separator dots and dropdown placeholders
+   * were all rendering below the readable floor — the "everything looks
+   * too light" report.
+   *
+   * Ghost is now approximately what secondary used to be, and secondary
+   * moved up a step. The three-tier separation is preserved (16 / 6.6 /
+   * 4.8), so components still encode importance, but the FLOOR now
+   * passes AA for the small type sizes actually in use.
+   *
+   * Session 55 history, kept because it is the same mistake: ghost was
+   * once #3a3836 at ~1.7:1, effectively invisible. Raising it to
+   * #6a6862 fixed "invisible" but stopped short of "readable".
+   *
    *   - Primary: titles, current-state values, active controls
    *   - Secondary: body text, sub-labels, metadata that needs reading
    *   - Ghost: separator dots, decorative captions, idle icons
+   *
+   * Do not lower these without checking the computed ratio against the
+   * actual font size at the call site.
    */
   --text-primary: #edebe6;
-  --text-secondary: #7a786f;
-  --text-ghost: #6a6862;
+  --text-secondary: #9a978c;
+  --text-ghost: #807e75;
 
   /* ── Borders ─────────────────────────────────────────────────── */
-  --border-faint: #161614;
+  /*
+   * Computed contrast against --bg-base (#0d0d0d), luminance 0.00403.
+   *
+   * WCAG 1.4.11 (non-text contrast) requires 3:1 for the boundary of a
+   * UI COMPONENT — inputs, selects, and anything whose edge tells you
+   * where to click. Purely decorative rules and dividers are exempt and
+   * may stay quiet.
+   *
+   * The distinction matters because these tokens were doing both jobs
+   * with one value:
+   *
+   *   --border-faint    #161614   1.20:1  divider, decorative
+   *   --border-subtle   #202020   1.19:1  <-- was on Input + Select
+   *   --border-default  #2c2a27   1.36:1  decorative
+   *   --border-strong   #3d3a36   1.71:1  emphasis, decorative
+   *
+   * Session 66: form controls were drawing their boundary with
+   * --border-subtle at 1.19:1, a clear 1.4.11 failure — the edge of a
+   * text field was essentially invisible against the canvas. Rather than
+   * raise every hairline in the app (which would coarsen the whole
+   * surface treatment for a problem confined to controls), interactive
+   * boundaries now have their own token that actually clears 3:1.
+   *
+   *   --border-control  #62605a   3.09:1  PASSES 1.4.11
+   *
+   * Use --border-control for anything the user can type into, open, or
+   * toggle. Leave the others for structure and decoration.
+   *
+   * Session 66, second pass: the 3:1 border was applied to control edges
+   * at REST and it read as a bright outline on every dropdown, which
+   * visibly coarsened the Settings page. Reverted to a quiet resting
+   * edge, with --border-control moved onto the FOCUS / OPEN state.
+   *
+   * That is the better placement anyway. WCAG 2.4.11 is specifically
+   * about the focus indicator being visible; a permanently bright box
+   * around an idle control is not what the criterion asks for. Idle
+   * controls now read quietly and the active one is unmistakable.
+   *
+   * --border-faint was also raised, not for compliance but because at
+   * 1.20:1 the History and session-detail separators were invisible, so
+   * the structure they were drawing did not read at all.
+   */
+  --border-faint: #232320;
   --border-subtle: #202020;
   --border-default: #2c2a27;
   --border-strong: #3d3a36;
+  --border-control: #62605a;
 
   /* ── Waveform ────────────────────────────────────────────────── */
   --wave-primary: #edebe6;
@@ -91,7 +154,20 @@
    * both the dark canvas (--bg-base) and the elevated surfaces
    * (--bg-elevated / --bg-high). Only surfaces for keyboard-only
    * focus (`:focus-visible`) so mouse clicks don't light up rings. */
-  --accent-focus: #6c8fff;
+  /* Focus ring color.
+   *
+   * Session 66: was #6c8fff, a blue-violet. It was the only cool hue in
+   * an otherwise warm-neutral palette, so pressing Space on a sidebar
+   * item lit a saturated blue box that belonged to no other part of the
+   * app and read as an unstyled browser default rather than a designed
+   * state.
+   *
+   * Now a warm grey from the same family as the text tokens. It measures
+   * ~6.6:1 against --bg-base, comfortably clearing the 3:1 WCAG 2.4.11
+   * asks of a focus indicator, so this is purely tonal with no loss of
+   * visibility. Only surfaces for keyboard-only focus (`:focus-visible`)
+   * so mouse clicks don't light up rings. */
+  --accent-focus: #9a978c;
 
   /* ── Type scale ──────────────────────────────── */
   /*
@@ -254,7 +330,7 @@ a:hover {
   outline: none;
 }
 *:focus-visible {
-  outline: 2px solid var(--accent-focus, #6c8fff);
+  outline: 2px solid var(--accent-focus, #9a978c);
   outline-offset: 2px;
   border-radius: var(--radius-micro);
 }
@@ -274,13 +350,27 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 [contenteditable="true"]:focus-visible {
-  outline: 2px solid var(--accent-focus, #6c8fff);
+  outline: 2px solid var(--accent-focus, #9a978c);
   outline-offset: 1px;
 }
 
 /* Links (inside the app — CloudHint, OAuth deep links). */
 a:focus-visible {
-  outline: 2px solid var(--accent-focus, #6c8fff);
+  outline: 2px solid var(--accent-focus, #9a978c);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/*
+ * Text-input focus indicator.
+ *
+ * The resting border is deliberately quiet (see --border-control above),
+ * so focus is where the 3:1 boundary belongs. Components in this codebase
+ * are styled inline, and an inline style beats a stylesheet rule on
+ * specificity, so this needs !important to land. That is justified here:
+ * without it there is no visible focus state at all, which fails
+ * WCAG 2.4.11.
+ */
+[data-popo-input]:focus-visible {
+  border-color: var(--border-control) !important;
 }

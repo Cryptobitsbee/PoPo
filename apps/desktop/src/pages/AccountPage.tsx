@@ -20,6 +20,7 @@ import SettingsGroup from "../components/settings/SettingsGroup";
 import SettingRow from "../components/settings/SettingRow";
 import SyncLogViewer from "../components/account/SyncLogViewer";
 import FirestoreTestButton from "../components/account/FirestoreTestButton";
+import PageShell from "../components/layout/PageShell";
 import { useAuthStore } from "../store/authStore";
 import { useHistoryStore } from "../store/historyStore";
 import {
@@ -45,14 +46,11 @@ export default function AccountPage() {
   const status = useAuthStore((s) => s.status);
 
   return (
-    <div
-      style={{
-        padding: "var(--sp-8) var(--sp-10)",
-        maxWidth: 680,
-        margin: "0 auto",
-      }}
-    >
-      <h1
+    <PageShell
+      maxWidth={680}
+      header={
+        <>
+        <h1
         style={{
           fontFamily: "var(--font-pixel-square)",
           fontSize: "var(--text-xl)",
@@ -63,9 +61,12 @@ export default function AccountPage() {
           marginBottom: "var(--sp-6)",
         }}
       >
-        Account
-      </h1>
-
+          Account
+        </h1>
+        {status === "signed-in" && <ProfileCard />}
+        </>
+      }
+    >
       {status === "unconfigured" ? (
         <UnconfiguredPanel />
       ) : status === "loading" ? (
@@ -75,7 +76,7 @@ export default function AccountPage() {
       ) : (
         <SignedInPanel />
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -318,65 +319,9 @@ function SignedInPanel() {
 
   return (
     <div>
-      {/* Profile card */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--sp-5)",
-          padding: "var(--sp-6) var(--sp-7)",
-          background: "var(--bg-surface)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "var(--radius-card)",
-        }}
-      >
-        <Avatar photoURL={user.photoURL} displayName={user.displayName} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontFamily: "var(--font-pixel-square)",
-              fontSize: "var(--text-base)",
-              fontWeight: 500,
-              color: "var(--text-primary)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {user.displayName ?? "Unnamed account"}
-          </div>
-          <div
-            style={{
-              marginTop: 2,
-              fontFamily: "var(--font-pixel-line)",
-              fontSize: "var(--text-xs)",
-              color: "var(--text-secondary)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {user.email ?? "no email"}
-          </div>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            flexShrink: 0,
-            fontFamily: "var(--font-pixel-line)",
-            fontSize: "var(--text-xs)",
-            color: "var(--accent-success)",
-          }}
-        >
-          <Check size={12} weight="regular" />
-          Connected
-        </div>
-      </div>
 
       {/* Usage stats grid */}
-      <SettingsGroup label="Your usage">
+      <SettingsGroup label="Your usage" first>
         <StatGrid
           items={[
             {
@@ -624,6 +569,79 @@ function StatGrid({ items }: { items: StatItem[] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// --- Profile card -------------------------------------------------------
+//
+// Hoisted OUT of SignedInPanel so AccountPage can render it inside
+// PageShell's header zone. The identity you are acting as should stay
+// visible while you scroll usage stats, the sync log and the danger-zone
+// controls -- those are all actions taken against THIS account, and
+// scrolling the account away while a "Delete all my data" button comes
+// into view is exactly the wrong affordance.
+function ProfileCard() {
+  const user = useAuthStore((s) => s.user);
+  if (!user) return null;
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--sp-5)",
+          padding: "var(--sp-6) var(--sp-7)",
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-card)",
+        }}
+      >
+        <Avatar photoURL={user.photoURL} displayName={user.displayName} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-pixel-square)",
+              fontSize: "var(--text-base)",
+              fontWeight: 500,
+              color: "var(--text-primary)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {user.displayName ?? "Unnamed account"}
+          </div>
+          <div
+            style={{
+              marginTop: 2,
+              fontFamily: "var(--font-pixel-line)",
+              fontSize: "var(--text-xs)",
+              color: "var(--text-secondary)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {user.email ?? "no email"}
+          </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            flexShrink: 0,
+            fontFamily: "var(--font-pixel-line)",
+            fontSize: "var(--text-xs)",
+            color: "var(--accent-success)",
+          }}
+        >
+          <Check size={12} weight="regular" />
+          Connected
+        </div>
+      </div>
+
     </div>
   );
 }

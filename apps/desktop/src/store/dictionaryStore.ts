@@ -8,7 +8,7 @@ import { useAuthStore } from "./authStore";
 import { trackSync } from "./syncLogStore";
 
 /**
- * dictionaryStore — phrase hints passed to Chirp 3's speech-adaptation
+ * dictionaryStore - custom vocabulary passed to the speech model
  * layer (`RecognitionConfig.adaptation.phrase_sets`).
  *
  * Use cases:
@@ -16,7 +16,7 @@ import { trackSync } from "./syncLogStore";
  *   - Technical jargon (framework names, API names, acronyms)
  *   - Brand names the model mis-transcribes
  *
- * Up to 1000 entries per request (Google's Chirp 3 limit). The frontend
+ * Up to 1000 entries per session (Google limit). The frontend
  * pushes the current list to Rust via `cmd_set_dictionary` whenever it
  * changes; Rust attaches them as inline phrase_sets on every
  * StreamingRecognize / Recognize call.

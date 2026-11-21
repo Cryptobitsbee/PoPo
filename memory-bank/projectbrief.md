@@ -13,7 +13,7 @@ service that:
 2. Owns a single **pill overlay** that is always on screen (sleep state is a
    barely-visible ambient element at the bottom-center of the screen).
 3. When a global hotkey is held (default `Ctrl+Shift+Space`), the pill morphs
-   from sleep → ready → active, captures voice, streams it to GCP Chirp 3 for
+   from sleep → ready → active, captures voice, streams it to Gemini 3.5 Transcribe Live for
    transcription, optionally post-processes through Gemini Flash, and **pastes
    the result at whatever text cursor the user last had focused** in any
    application on the system.
@@ -26,7 +26,7 @@ service that:
 - Pill: sleep / ready / active / processing / success / error (ONE morphing
   component, never two components being swapped)
 - Live 16-bar waveform reflecting PCM amplitude from Rust
-- GCP Speech-to-Text v2 streaming (model family: Chirp 2/3)
+- Gemini 3.5 Transcribe Live streaming (Vertex AI Live API)
 - Focus capture + restore + auto-paste (enigo Ctrl+V with fallback chain)
 - Clipboard save-and-restore around every paste
 - System tray (Open popo / Quit)

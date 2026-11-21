@@ -26,11 +26,6 @@ import { useDictionaryStore } from "../store/dictionaryStore";
  *   - soundEffects             → cmd_set_sound_effects
  *   - startAtLogin             → cmd_set_start_at_login
  *
- *   ─ Phase C (Chirp 3 feature flags) ─
- *   - spokenPunctuation        → cmd_set_spoken_punctuation
- *   - spokenEmojis             → cmd_set_spoken_emojis
- *   - profanityFilter          → cmd_set_profanity_filter
- *   - multiLanguageCodes       → cmd_set_multi_language_codes
  *
  *   ─ Phase D (Gemini Flash) ─
  *   - autoFormat               → cmd_set_auto_format
@@ -61,16 +56,6 @@ export function useApplySettingsToRust() {
   const storeAudio = useSettingsStore((s) => s.settings.storeAudio);
   const soundEffects = useSettingsStore((s) => s.settings.soundEffects);
   const startAtLogin = useSettingsStore((s) => s.settings.startAtLogin);
-
-  // Phase C
-  const spokenPunctuation = useSettingsStore(
-    (s) => s.settings.spokenPunctuation,
-  );
-  const spokenEmojis = useSettingsStore((s) => s.settings.spokenEmojis);
-  const profanityFilter = useSettingsStore((s) => s.settings.profanityFilter);
-  const multiLanguageCodes = useSettingsStore(
-    (s) => s.settings.multiLanguageCodes,
-  );
 
   // Phase D
   const autoFormat = useSettingsStore((s) => s.settings.autoFormat);
@@ -146,12 +131,6 @@ export function useApplySettingsToRust() {
   }));
   const pasteOverridesKey = pasteOverridesPayload
     .map((o) => `${o.appName}␟${o.keystroke}`)
-    .join("\n");
-
-  // Endpointing sensitivity (Session 33). Pushed as a plain
-  // lowercase string; Rust normalises unknowns to "standard".
-  const endpointing = useSettingsStore((s) => s.settings.endpointing);
-
   // Gemini API key (Session 34, simplified Session 35). Pushed
   // whenever the user updates Settings → Transcription → Gemini API
   // key. Lives on GCPSettings (machine-local, never synced to
@@ -226,27 +205,6 @@ export function useApplySettingsToRust() {
     startAtLogin,
   ]);
 
-  // Phase C
-  useDebouncedInvoke(
-    "cmd_set_spoken_punctuation",
-    { enabled: spokenPunctuation },
-    [spokenPunctuation],
-  );
-  useDebouncedInvoke("cmd_set_spoken_emojis", { enabled: spokenEmojis }, [
-    spokenEmojis,
-  ]);
-  useDebouncedInvoke("cmd_set_profanity_filter", { enabled: profanityFilter }, [
-    profanityFilter,
-  ]);
-  // Arrays compare by reference; serialize to a stable key so we only
-  // re-push when contents actually change.
-  const langsKey = multiLanguageCodes.join(",");
-  useDebouncedInvoke(
-    "cmd_set_multi_language_codes",
-    { codes: multiLanguageCodes },
-    [langsKey],
-  );
-
   // Phase D
   useDebouncedInvoke("cmd_set_auto_format", { enabled: autoFormat }, [
     autoFormat,
@@ -278,13 +236,6 @@ export function useApplySettingsToRust() {
     "cmd_set_paste_overrides",
     { overrides: pasteOverridesPayload },
     [pasteOverridesKey],
-  );
-
-  // Endpointing sensitivity (Session 33).
-  useDebouncedInvoke(
-    "cmd_set_endpointing_sensitivity",
-    { sensitivity: endpointing },
-    [endpointing],
   );
 
   // Gemini API key (Session 34, simplified Session 35).

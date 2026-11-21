@@ -20,7 +20,7 @@ import { useSettingsStore } from "../../store/settingsStore";
  *
  * The provider is committed here in Settings and never auto-detected
  * on the dictation path. A "Setup guide" button opens VertexSetupWizard
- * (the Vertex analog of the Chirp GCP wizard) so users can actually
+ * (the AI-formatting analog of the GCP wizard) so users can actually
  * get Vertex working. A single Test connection row confirms the chosen
  * provider reaches a live model — the button stays put on the right and
  * the (possibly long) result lives in the left status line, truncated,

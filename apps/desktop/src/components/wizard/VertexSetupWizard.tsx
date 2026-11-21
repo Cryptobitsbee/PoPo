@@ -17,7 +17,7 @@ import { useSettingsStore } from "../../store/settingsStore";
  * VertexSetupWizard — guided setup for the Vertex AI Gemini provider.
  *
  * The Vertex analog of GCPSetupWizard. Vertex reuses the SAME service
- * account the user already configured in GCP Setup (for Chirp), so
+ * account the user already configured in GCP Setup, so
  * there's no key to download here — the user only has to:
  *   0. Intro       — what Vertex is + the one prerequisite (GCP Setup)
  *   1. Enable API  — turn on the Vertex AI API in the console
@@ -221,7 +221,7 @@ function IntroStep({
           label="What you do here"
           value="Enable the Vertex AI API, grant the Vertex AI User role, pick a region, test."
         />
-        <Fact label="Cost" value="Billed to your own Google Cloud project, like Chirp." />
+        <Fact label="Cost" value="Billed to your own Google Cloud project, like transcription." />
       </div>
 
       {!gcpReady && (

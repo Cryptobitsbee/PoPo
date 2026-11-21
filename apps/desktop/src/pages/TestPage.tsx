@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { MicDevice } from "@popo/shared-types";
 import { useModesStore } from "../store/modesStore";
 import { useSettingsStore } from "../store/settingsStore";
+import PageShell from "../components/layout/PageShell";
 import Select from "../components/shared/Select";
 import HoldToDictateButton, {
   type TestState,
@@ -17,7 +18,7 @@ import TranscriptOutput from "../components/test/TranscriptOutput";
  *   LEFT: Microphone select · Mode select · Hold to Dictate button
  *   RIGHT: Transcript output box + word count + Copy
  *
- * Phase E (Session 21): wired to the real cpal + GCP Chirp pipeline.
+ * Phase E (Session 21): wired to the real cpal + transcription pipeline.
  *
  *   mousedown/touchstart → cmd_test_dictate_start(micId)
  *     → Rust opens mic, starts emitting test:waveform events at 25 Hz
@@ -224,13 +225,10 @@ export default function TestPage() {
   }));
 
   return (
-    <div
-      style={{
-        padding: "var(--sp-8) var(--sp-10)",
-        maxWidth: 1040,
-        margin: "0 auto",
-      }}
-    >
+    <PageShell
+      maxWidth={1040}
+      header={
+        <>
       <h1
         style={{
           margin: 0,
@@ -262,6 +260,9 @@ export default function TestPage() {
           </span>
         ) : null}
       </p>
+        </>
+      }
+    >
 
       <div
         style={{
@@ -346,6 +347,6 @@ export default function TestPage() {
           onCopy={handleCopy}
         />
       </div>
-    </div>
+    </PageShell>
   );
 }

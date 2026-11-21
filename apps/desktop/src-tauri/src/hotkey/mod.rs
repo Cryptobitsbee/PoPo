@@ -192,22 +192,6 @@ pub struct PopoState {
     /// via Web Audio API tones. Mutes everything when false.
     pub sound_effects: Mutex<bool>,
 
-    // ── Phase C: Chirp 3 feature flags ──────────────────────────
-    /// If true, pass `enable_spoken_punctuation=true` to Chirp 3 so
-    /// spoken "comma" / "period" / "question mark" become the
-    /// matching symbols in the transcript.
-    pub spoken_punctuation: Mutex<bool>,
-    /// If true, pass `enable_spoken_emojis=true` to Chirp 3.
-    pub spoken_emojis: Mutex<bool>,
-    /// If true, pass `profanity_filter=true` to Chirp 3 (masks
-    /// profanity with asterisks).
-    pub profanity_filter: Mutex<bool>,
-    /// If non-empty, pass this array as `language_codes` to Chirp 3 so
-    /// it code-switches between the given BCP-47 locales mid-sentence.
-    /// Empty + `config.language_code == "auto"` means auto-detect
-    /// across all Chirp-supported languages.
-    pub multi_language_codes: Mutex<Vec<String>>,
-
     // ── Phase D: Gemini Flash post-processing ────────────────────
     /// If true, run transcripts through Gemini Flash using
     /// `auto_format_prompt` before pasting. Guarded by the frontend's
@@ -225,15 +209,16 @@ pub struct PopoState {
     /// trigger words with their stored values.
     pub snippets: Mutex<Vec<SnippetEntry>>,
 
-    /// Phrase hints biased into Chirp 3 speech adaptation. Pushed
-    /// from the frontend via `cmd_set_dictionary`. Consumed by
-    /// `on_press` when building the StreamingRecognize request.
+    /// Phrase hints biased into `customVocabulary`. Pushed from the
+    /// frontend via `cmd_set_dictionary`. Consumed by `on_press` when
+    /// building the Live API setup message. Unlike the old PhraseSet
+    /// adaptation, this applies even with automatic language detection.
     pub dictionary: Mutex<Vec<String>>,
 
     // ── Per-mode app bindings + per-app paste overrides ─────────
     /// All modes + their per-app bindings. Pushed from the frontend
     /// via `cmd_set_mode_bindings` whenever modesStore changes. Used
-    /// by `on_press` to pick the active Chirp `custom_prompt` based
+    /// by `on_press` to pick the active mode prompt based
     /// on the foreground app:
     ///   1. First binding whose `apps` list contains the foreground
     ///      app's friendly name (case-insensitive) wins.
@@ -251,16 +236,6 @@ pub struct PopoState {
     /// list (case-insensitive, first-match-wins) and sends the
     /// configured keystroke instead of the default Ctrl+V.
     pub paste_overrides: Mutex<Vec<PasteOverride>>,
-
-    // ── Chirp 3 endpointing sensitivity ─────────────────────────
-    /// Controls how quickly Chirp 3 finalises a transcript after
-    /// the speaker pauses. Mirrors `Settings.endpointing` on the
-    /// frontend. Read at stream-open time in `gcp::streaming::start`
-    /// via `resolve_endpointing_sensitivity`.
-    ///
-    /// Stored as one of: "low" / "standard" / "high". Default
-    /// `"standard"` matches Google's recommended setting.
-    pub endpointing_sensitivity: Mutex<String>,
 
     // ── Per-mode dedicated hotkeys ────────────────────────────
     /// Dedicated shortcuts registered for individual modes. When a
@@ -298,7 +273,7 @@ pub struct PopoState {
     /// Google AI Studio API key for the Gemini Flash-Lite call.
     /// `None` when the user hasn't configured it. With
     /// `auto_format_enabled=true` AND a non-empty key, polish runs;
-    /// otherwise we skip polish (Chirp output passes through, with
+    /// otherwise we skip polish (the transcript passes through, with
     /// its own custom_prompt biasing if auto_format is on).
     pub gemini_api_key: Mutex<Option<String>>,
     /// Which Gemini provider to use: "aistudio" (default) or "vertex".
@@ -409,10 +384,6 @@ impl Default for PopoState {
             store_audio: Mutex::new(false),
             sound_effects: Mutex::new(true),
             // Phase C defaults.
-            spoken_punctuation: Mutex::new(false),
-            spoken_emojis: Mutex::new(false),
-            profanity_filter: Mutex::new(false),
-            multi_language_codes: Mutex::new(Vec::new()),
             // Phase D defaults. auto_format_enabled stays false until
             // the frontend pushes Settings → Auto-format toggle.
             auto_format_enabled: Mutex::new(false),
@@ -421,7 +392,6 @@ impl Default for PopoState {
             dictionary: Mutex::new(Vec::new()),
             mode_bindings: Mutex::new(Vec::new()),
             paste_overrides: Mutex::new(Vec::new()),
-            endpointing_sensitivity: Mutex::new("standard".to_string()),
             mode_hotkeys: Mutex::new(Vec::new()),
             pending_forced_mode_id: Mutex::new(None),
             switcher_caller_hwnd: Mutex::new(None),
@@ -464,12 +434,13 @@ pub struct RecordingSession {
     /// filtering / grouping sessions by app, and for an at-a-glance
     /// icon bubble on each SessionRow.
     app_icon_b64: Option<String>,
-    /// Handle to the active StreamingRecognize gRPC session. `Some` when
-    /// GCP is configured and the stream opened successfully at press time.
-    /// `None` means we fall back to batch `gcp::transcribe` on release.
-    streaming_handle: Option<gcp::streaming::LiveStreamHandle>,
-    /// JoinHandle for the chunk-forwarder task that sends audio to GCP
-    /// every ~100ms during recording. Aborted/joined on release.
+    /// Handle to the active Gemini 3.5 Transcribe Live turn. `Some` when
+    /// GCP is configured and the socket cleared `setupComplete` at press
+    /// time. `None` means the socket never opened, which is a hard
+    /// failure: the Live API has no batch fallback.
+    live_session: Option<gcp::transcribe_live::LiveSession>,
+    /// JoinHandle for the chunk-forwarder task that pumps audio into the
+    /// socket every ~100ms during recording. Aborted/joined on release.
     chunk_forwarder: Option<tokio::task::JoinHandle<()>>,
     /// How many samples have been forwarded to streaming so far.
     /// Used by the chunk-forwarder to only send NEW samples each tick.
@@ -771,7 +742,7 @@ fn unix_now_ms() -> u64 {
 
 /// Walk an anyhow error's `source` chain and join every message with
 /// ": ". This is crucial for pipeline errors where our top-level
-/// `.context("Speech-to-Text v2 Recognize call failed")` hides the
+/// `.context("transcription call failed")` hides the
 /// actual Google gRPC Status message underneath — the user needs to
 /// see BOTH layers to understand what's wrong.
 fn format_error_chain(err: &anyhow::Error) -> String {
@@ -855,6 +826,22 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
     let mut app_icon_b64: Option<String> = None;
     #[cfg(target_os = "windows")]
     let mut app_name: Option<String> = None;
+
+    // 1a-bis. Multi-monitor: put the pill on the screen the user is
+    //     actually looking at before it becomes visible.
+    //
+    //     Done here, in the synchronous claim phase, because the pill is
+    //     about to transition out of `sleep` and must already be on the
+    //     right monitor — moving it after it is visible would show a
+    //     jump across screens. It is a single SetWindowPos on an
+    //     already-created window, and it no-ops entirely when the pill is
+    //     already on the target monitor, so the Session 27 claim-before-
+    //     async budget is unaffected.
+    #[cfg(target_os = "windows")]
+    if let Some(hwnd) = foreground_hwnd {
+        crate::reposition_pill_for_hwnd(app, hwnd);
+    }
+
     #[cfg(target_os = "windows")]
     if let Some(hwnd) = foreground_hwnd {
         let icon = focus::app_icon::get_app_icon_base64(hwnd);
@@ -976,7 +963,7 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
             prev_clipboard,
             app_name,
             app_icon_b64,
-            streaming_handle: None,
+            live_session: None,
             chunk_forwarder: None,
             sent_count: sent_count.clone(),
             forced_mode_id: forced_mode_id.clone(),
@@ -1007,10 +994,11 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
     };
 
     if let Some((config, auth)) = gcp_snapshot {
-        // Resolve features + language list from PopoState. These
-        // reflect the user's Settings at press time.
+        // Resolve the language list from PopoState. Empty = automatic
+        // language identification with native mid-utterance
+        // code-switching, which is why `multiLanguageCodes` no longer
+        // exists as a setting.
         let language_codes = resolve_language_codes(&config, state.inner());
-        let features = resolve_recognition_features(state.inner());
 
         // Resolve custom_prompt using the per-app mode binding resolver.
         // This picks the mode whose `apps` list matches `app_name`
@@ -1042,49 +1030,27 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
             tracing::info!("on_press: custom_prompt empty (auto-format off or no match)");
         }
 
-        // Snapshot the dictionary phrase list for the streaming
-        // adaptation payload. Empty = no adaptation attached.
+        // Dictionary phrases for `custom_vocabulary` biasing.
         //
-        // IMPORTANT (Session 31 finding): Chirp 3's adaptation pipeline
-        // REQUIRES a specific language_code. When `language_codes` is
-        // `["auto"]`, the server rejects any phrase_set with
-        // NOT_FOUND / "Requested entity was not found" — there's no
-        // language context yet for the acoustic-model biasing to
-        // apply to. Empirically verified: same request succeeds on
-        // `["en-US"]`, fails on `["auto"]`. Every Google docs
-        // adaptation example uses a specific locale for this reason.
+        // Session 31's constraint is GONE. The old PhraseSet
+        // adaptation required a concrete language and returned NOT_FOUND
+        // against `["auto"]`, so popo silently dropped the whole
+        // Dictionary whenever Auto-detect was on. Gemini 3.5 Transcribe
+        // Live's `customVocabulary` works alongside automatic language
+        // identification, so the Dictionary now always applies.
         //
-        // If the user has Auto-detect language ON and the dictionary
-        // is populated, we silently drop the adaptation rather than
-        // force them to pick a language. DictionaryPage surfaces
-        // this constraint in the UI copy.
-        let language_is_auto = language_codes.is_empty()
-            || language_codes
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case("auto"));
-        let adaptation_phrases: Vec<String> = if language_is_auto {
-            Vec::new()
-        } else {
-            state
+        // Google accepts up to 1000 terms but reports best results
+        // under ~100, so we cap rather than send an unbounded list.
+        let custom_vocabulary: Vec<String> = {
+            let mut v: Vec<String> = state
                 .inner()
                 .dictionary
                 .lock()
                 .map(|g| g.clone())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            v.truncate(gcp::transcribe_live::MAX_CUSTOM_VOCABULARY);
+            v
         };
-        if language_is_auto {
-            let have_dict = state
-                .inner()
-                .dictionary
-                .lock()
-                .map(|g| !g.is_empty())
-                .unwrap_or(false);
-            if have_dict {
-                tracing::info!(
-                    "streaming: skipping adaptation (language is auto-detect; Chirp 3 needs a specific locale for phrase biasing)"
-                );
-            }
-        }
 
         // Identity tag for the patcher. The Arc we just stored in the
         // session + the one we move into the spawned task are
@@ -1099,22 +1065,63 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
         let sent_count_fwd = sent_count.clone();
         let project_id = config.project_id.clone();
 
+        // Tier selection (spec §3). Auto-format off, or on with no mode
+        // prompt, both mean no Gemini hop; the difference is whether the
+        // model cleans up. A non-empty prompt means Flash-Lite owns
+        // formatting, so the wire mode must be VERBATIM.
+        let transcribe_mode = if effective_prompt_owned.trim().is_empty() {
+            let auto_on = state
+                .inner()
+                .auto_format_enabled
+                .lock()
+                .map(|g| *g)
+                .unwrap_or(false);
+            if auto_on {
+                gcp::transcribe_live::TranscribeMode::Smart
+            } else {
+                gcp::transcribe_live::TranscribeMode::Verbatim
+            }
+        } else {
+            gcp::transcribe_live::TranscribeMode::Verbatim
+        };
+
+        let session_config = gcp::transcribe_live::SessionConfig {
+            mode: transcribe_mode,
+            language_codes: language_codes.clone(),
+            custom_vocabulary,
+        };
+
         tauri::async_runtime::spawn(async move {
-            let stream_open_start = std::time::Instant::now();
-            match gcp::streaming::start(
-                &auth,
-                &project_id,
-                &language_codes,
-                gcp::chirp::TARGET_SR as i32,
-                features,
-                &effective_prompt_owned,
-                &adaptation_phrases,
-            )
-            .await
+            let open_start = std::time::Instant::now();
+
+            // The Live API requires a Bearer token, minted before the
+            // socket opens. Never hold a MutexGuard across this await
+            // (Session 57 rule).
+            let token = match auth.access_token().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("transcribe_live: could not mint OAuth token: {e:#}");
+                    return;
+                }
+            };
+
+            match gcp::transcribe_live::LiveSession::open(&token, &project_id, session_config).await
             {
-                Ok(handle) => {
-                    let open_ms = stream_open_start.elapsed().as_millis();
-                    tracing::info!("streaming: opened StreamingRecognize session in {open_ms}ms");
+                Ok(mut session) => {
+                    // `open()` has already awaited setupComplete, so it
+                    // is safe to start the turn. Sending audio before
+                    // that gate clears yields empty transcripts on short
+                    // clips, which is exactly popo's workload.
+                    if let Err(e) = session.begin_utterance().await {
+                        tracing::error!("transcribe_live: activityStart failed: {e:#}");
+                        return;
+                    }
+                    tracing::info!(
+                        "transcribe_live: session ready + turn open in {}ms",
+                        open_start.elapsed().as_millis()
+                    );
+
+                    let audio_tx = session.audio_sender();
 
                     // Patch into the active session IFF identity matches.
                     let state = app_clone.state::<PopoState>();
@@ -1125,37 +1132,34 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
                         .expect("PopoState mutex poisoned");
 
                     match recording.as_mut() {
-                        Some(session) if Arc::ptr_eq(&session.running, &identity) => {
-                            let tx = handle.clone_tx();
+                        Some(rec) if Arc::ptr_eq(&rec.running, &identity) => {
                             let forwarder = spawn_chunk_forwarder(
-                                tx,
+                                audio_tx,
                                 samples_fwd,
                                 sample_rate,
                                 running_fwd,
                                 sent_count_fwd,
                             );
-                            session.streaming_handle = Some(handle);
-                            session.chunk_forwarder = Some(forwarder);
+                            rec.live_session = Some(session);
+                            rec.chunk_forwarder = Some(forwarder);
                             tracing::info!(
-                                "streaming: patched handle + forwarder into live session"
+                                "transcribe_live: patched session + forwarder into live recording"
                             );
                         }
                         Some(_) => {
                             tracing::info!(
-                                "streaming: session identity changed (press/release/press race) — dropping handle"
+                                "transcribe_live: session identity changed (press/release/press race) — dropping socket"
                             );
                         }
                         None => {
                             tracing::info!(
-                                "streaming: session already ended before stream opened — dropping handle (batch fallback will handle)"
+                                "transcribe_live: recording already ended before the socket opened — dropping"
                             );
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "streaming: failed to open session, on_release will fall back to batch: {e:?}"
-                    );
+                    tracing::error!("transcribe_live: failed to open session: {e:#}");
                 }
             }
         });
@@ -1164,24 +1168,14 @@ async fn on_press(app: &AppHandle, forced_mode_id: Option<String>) -> anyhow::Re
     Ok(())
 }
 
-/// Build the `language_codes` vector to send to Chirp 3.
+/// Build the `languageCodes` array for the Live API setup message.
 ///
-/// Priority:
-///   1. If `multi_language_codes` in PopoState is non-empty, use that
-///      array (enables Chirp 3 code-switching between e.g. `hi-IN`
-///      and `en-US`).
-///   2. Otherwise, if `config.language_code` is empty or "auto",
-///      return `vec![]` — Chirp 3 auto-detects from 125+ languages.
-///   3. Otherwise, return `vec![config.language_code.clone()]`.
-fn resolve_language_codes(config: &GcpConfig, state: &PopoState) -> Vec<String> {
-    let multi = state
-        .multi_language_codes
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    if !multi.is_empty() {
-        return multi;
-    }
+/// Empty means automatic language identification, which Gemini 3.5
+/// Transcribe Live handles across 85+ languages including
+/// mid-utterance code-switching. That native behaviour is why
+/// `Settings.multiLanguageCodes` no longer exists: the old engine needed an
+/// explicit array to switch languages, this model does not.
+fn resolve_language_codes(config: &GcpConfig, _state: &PopoState) -> Vec<String> {
     let single = config.language_code.trim();
     if single.is_empty() || single.eq_ignore_ascii_case("auto") {
         return Vec::new();
@@ -1189,29 +1183,7 @@ fn resolve_language_codes(config: &GcpConfig, state: &PopoState) -> Vec<String> 
     vec![single.to_string()]
 }
 
-/// Build a `RecognitionFeatures` from current PopoState toggles.
-/// `enable_automatic_punctuation` is always on — Chirp 3 handles
-/// caps/periods natively and users expect the output to look like
-/// prose, not an LLM prompt.
-fn resolve_recognition_features(
-    state: &PopoState,
-) -> googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::RecognitionFeatures {
-    use googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::RecognitionFeatures;
-
-    let spoken_punc = state.spoken_punctuation.lock().map(|g| *g).unwrap_or(false);
-    let spoken_emo = state.spoken_emojis.lock().map(|g| *g).unwrap_or(false);
-    let profanity = state.profanity_filter.lock().map(|g| *g).unwrap_or(false);
-
-    RecognitionFeatures {
-        enable_automatic_punctuation: true,
-        enable_spoken_punctuation: spoken_punc,
-        enable_spoken_emojis: spoken_emo,
-        profanity_filter: profanity,
-        ..Default::default()
-    }
-}
-
-/// Resolve the effective Chirp `custom_prompt` for the upcoming
+/// Resolve the effective mode prompt for the upcoming
 /// dictation session.
 ///
 /// Priority:
@@ -1221,7 +1193,7 @@ fn resolve_recognition_features(
 ///      if the id doesn't exist in bindings.
 ///   2. `auto_format_enabled == false` → empty string (no prompt).
 ///      This is the master switch: Settings → Transcription →
-///      Auto-format. When off, Chirp runs naked.
+///      Auto-format. When off, transcription runs VERBATIM.
 ///   3. Walk `mode_bindings`. If any binding's `apps` list contains
 ///      the foreground app's friendly name (case-insensitive), use
 ///      that binding's `system_prompt`. First match wins (tracing
@@ -1242,7 +1214,7 @@ fn resolve_recognition_features(
 /// `BASELINE_CORRECTION`** so factual cleanups (self-corrections,
 /// stutter collapse, obvious mis-transcriptions, grammar) apply
 /// uniformly across all modes. Only when auto-format is OFF do we
-/// return empty — that path produces truly raw Chirp output for
+/// return empty — that path produces truly the raw transcript output for
 /// users who want unmodified text.
 #[cfg(test)]
 mod prompt_resolution_tests {
@@ -1494,7 +1466,7 @@ pub(crate) fn unregister_cancel_hotkey(app: &AppHandle) {
 ///   - Skips the transcribe + paste pipeline entirely.
 ///   - Restores the user's original clipboard (nothing new to paste).
 ///   - Shows a brief "Cancelled" hint above the pill, then sleeps.
-///   - Aborts any in-flight gRPC stream to release Chirp billing slot.
+///   - Aborts the in-flight turn so Google stops billing.
 async fn on_cancel(app: &AppHandle) -> anyhow::Result<()> {
     // Take the session. If there's nothing to cancel, just make sure
     // ESC is no longer registered and return.
@@ -1518,17 +1490,19 @@ async fn on_cancel(app: &AppHandle) -> anyhow::Result<()> {
 
     // Destructure out just the fields we need to move/use. Doing this
     // in one shot avoids partial-move errors when we later access
-    // `prev_clipboard` after taking `streaming_handle` + `chunk_forwarder`.
+    // `prev_clipboard` after taking `live_session` + `chunk_forwarder`.
     let RecordingSession {
-        streaming_handle,
+        live_session,
         chunk_forwarder,
         prev_clipboard,
         ..
     } = session;
 
-    // Abort streaming + chunk forwarder to release GCP resources.
-    if let Some(handle) = streaming_handle {
-        handle.abort();
+    // Close the turn and the socket so Google stops billing for a
+    // dictation the user explicitly cancelled.
+    if let Some(mut live) = live_session {
+        live.abort_utterance().await;
+        live.close().await;
     }
     if let Some(forwarder) = chunk_forwarder {
         forwarder.abort();
@@ -1553,38 +1527,6 @@ async fn on_cancel(app: &AppHandle) -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_millis(700)).await;
     let _ = app.emit_to("pill", "pill:state:sleep", ());
     Ok(())
-}
-
-/// Map `Settings.endpointing` into the Chirp 3 enum value.
-///
-/// Used by `gcp::streaming::start` when constructing the streaming
-/// config.
-///
-/// **Status note (2026-05):** the `googleapis-tonic-google-cloud-speech-v2`
-/// crate v0.34 only exposes `Unspecified` and `Standard` on the
-/// `EndpointingSensitivity` enum. Google's Chirp 3 docs document LOW /
-/// HIGH values, but they aren't in the proto crate yet. Until the
-/// crate ships those variants, this resolver maps ALL user choices
-/// ("low" / "standard" / "high") to `Standard` and logs an info line
-/// when a non-standard value was requested. The frontend plumbing +
-/// PopoState field stay in place so re-enabling is a one-line flip
-/// when the proto updates.
-///
-/// Returns the raw i32 the proto expects.
-pub fn resolve_endpointing_sensitivity(state: &PopoState) -> i32 {
-    use googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::streaming_recognition_features::EndpointingSensitivity;
-    let v = state
-        .endpointing_sensitivity
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_else(|_| "standard".to_string());
-    let want = v.to_lowercase();
-    if want != "standard" {
-        tracing::info!(
-            "endpointing: requested {want:?} but proto crate only supports Standard; using Standard"
-        );
-    }
-    EndpointingSensitivity::Standard as i32
 }
 
 /// Spawn a background task that reads NEW samples from the ring buffer every
@@ -1772,69 +1714,14 @@ fn propagate_case(source: &str, target: &str) -> String {
 
 // ── Dictionary / speech adaptation ─────────────────────────────────
 //
-// Build a Chirp 3 `SpeechAdaptation` payload from the user's
-// dictionary phrases. Returns `None` when the list is empty so the
-// caller can skip the field entirely (Chirp errors if `adaptation`
-// is Some-but-empty).
-//
-// WIRE SHAPE MATTERS (Session 31 fix):
-//   Google's official Chirp 3 adaptation example in the Python docs
-//   sets boost ONLY at the per-phrase level (or omits it entirely),
-//   NEVER at the PhraseSet level. Proto3 omits default-value fields
-//   from the wire, so `PhraseSet.boost = 0.0` is effectively
-//   "unset" and matches the working Python request shape.
-//
-//   When we originally sent `PhraseSet.boost = 10.0` + per-phrase
-//   `boost = 0.0`, the per-phrase boost was omitted (default) but
-//   the PhraseSet-level boost stayed on the wire. Google's server
-//   returned NOT_FOUND / "Requested entity was not found" on every
-//   call (both EU and US regions) because that particular shape
-//   isn't recognized by Chirp 3's adaptation validator.
-//
-//   Fix: boost lives on each Phrase; PhraseSet.boost is left at 0.0
-//   (proto3 omits it). 10.0 is Google's recommended starting point.
-
-use googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::{
-    phrase_set::Phrase, speech_adaptation::adaptation_phrase_set::Value as PhraseSetValue,
-    speech_adaptation::AdaptationPhraseSet, PhraseSet, SpeechAdaptation,
-};
-
-pub fn build_speech_adaptation(phrases: &[String]) -> Option<SpeechAdaptation> {
-    if phrases.is_empty() {
-        return None;
-    }
-    let phrase_entries: Vec<Phrase> = phrases
-        .iter()
-        .map(|p| Phrase {
-            value: p.clone(),
-            boost: 10.0, // per-phrase biasing; Google-recommended mid-range
-        })
-        .collect();
-    Some(SpeechAdaptation {
-        phrase_sets: vec![AdaptationPhraseSet {
-            value: Some(PhraseSetValue::InlinePhraseSet(PhraseSet {
-                phrases: phrase_entries,
-                // Keep at 0.0 so proto3 omits this field — matches
-                // Google's working Python example exactly.
-                boost: 0.0,
-                ..Default::default()
-            })),
-        }],
-        custom_classes: vec![],
-    })
-}
-
 fn spawn_chunk_forwarder(
-    tx: tokio::sync::mpsc::Sender<googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::StreamingRecognizeRequest>,
+    tx: crate::gcp::transcribe_live::AudioSender,
     samples: Arc<Mutex<VecDeque<f32>>>,
     input_sample_rate: u32,
     running: Arc<AtomicBool>,
     sent_count: Arc<std::sync::atomic::AtomicUsize>,
 ) -> tokio::task::JoinHandle<()> {
-    use crate::gcp::chirp::{f32_to_pcm16_bytes, resample_to_16k, TARGET_SR};
-    use googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::{
-        streaming_recognize_request, StreamingRecognizeRequest,
-    };
+    use crate::audio::pcm::{f32_to_pcm16_bytes, resample_to_16k, TARGET_SR};
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(100));
@@ -1880,9 +1767,11 @@ fn spawn_chunk_forwarder(
                 continue;
             }
 
-            // Google caps streaming audio chunks at 25600 bytes per message.
-            // On the first tick after session setup (~800ms of buffered audio),
-            // the accumulated PCM can exceed this. Split into multiple sends.
+            // The Live API takes base64 JSON frames rather than binary
+            // gRPC messages, so the old 25600-byte per-message cap does
+            // not apply. Chunks are still split so a long first tick
+            // (~800ms of buffered audio) doesn't produce one oversized
+            // frame that stalls the socket.
             const MAX_CHUNK_BYTES: usize = 25_600;
 
             let chunks: Vec<&[u8]> = pcm_bytes.chunks(MAX_CHUNK_BYTES).collect();
@@ -1891,15 +1780,8 @@ fn spawn_chunk_forwarder(
             let mut send_failed = false;
 
             for sub_chunk in chunks {
-                let msg = StreamingRecognizeRequest {
-                    recognizer: String::new(),
-                    streaming_request: Some(streaming_recognize_request::StreamingRequest::Audio(
-                        sub_chunk.to_vec().into(),
-                    )),
-                };
-
-                if tx.send(msg).await.is_err() {
-                    tracing::warn!("streaming: chunk forwarder channel closed, stopping");
+                if tx.send_audio(sub_chunk.to_vec()).await.is_err() {
+                    tracing::warn!("transcribe_live: forwarder queue closed, stopping");
                     send_failed = true;
                     break;
                 }
@@ -2068,7 +1950,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
         foreground_hwnd,
         prev_clipboard,
         pcm_snapshot,
-        streaming_handle,
+        live_session,
         chunk_forwarder,
         sent_count,
         app_name,
@@ -2115,7 +1997,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             session.foreground_hwnd,
             session.prev_clipboard,
             pcm_snapshot,
-            session.streaming_handle,
+            session.live_session,
             session.chunk_forwarder,
             session.sent_count,
             session.app_name,
@@ -2133,7 +2015,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
 
     // ── Pre-API guards ──────────────────────────────────────────────────
     //
-    // Three protections run BEFORE any paid Chirp 3 API activity:
+    // Three protections run BEFORE any paid transcription API activity:
     //
     //   1. Minimum recording duration (400 ms). Accidental hotkey taps
     //      never reach the API.
@@ -2145,7 +2027,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     //      the response collector so we don't wait on a transcript we
     //      don't want.
     //
-    // These guards ALSO prevent a known Chirp 3 misbehavior: when
+    // These guards ALSO prevent a known model misbehavior: when
     // audio is mostly silence AND custom_prompt_config is set, the
     // model can hallucinate the prompt text itself as the returned
     // transcript (the prompt-echo bug). We double-guard against that
@@ -2194,9 +2076,11 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             peak_post,
             stream_error_kind
         );
-        // Kill streaming cleanly so GCP releases the recognizer slot.
-        if let Some(handle) = streaming_handle {
-            handle.abort();
+        // Close the turn cleanly so Google stops billing, without
+        // waiting for a transcript we already know we don't want.
+        if let Some(mut session) = live_session {
+            session.abort_utterance().await;
+            session.close().await;
         }
         if let Some(forwarder) = chunk_forwarder {
             forwarder.abort();
@@ -2233,42 +2117,6 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
         resolve_effective_prompt(st.inner(), app_name.as_deref(), forced_mode_id.as_deref()).0
     };
 
-    // Dictionary phrases for any batch-transcribe fallback below.
-    // The streaming path already baked them in at on_press time via
-    // `adaptation_phrases`; this snapshot covers PATH B (no streaming)
-    // and PATH A's error-retry branches.
-    //
-    // Same auto-detect guard as the streaming path: Chirp 3 rejects
-    // adaptation + `["auto"]` with NOT_FOUND. Resolve the effective
-    // language here (same logic as resolve_language_codes would
-    // apply during the batch call) and short-circuit to empty
-    // phrases when auto is active.
-    let adaptation_phrases_batch: Vec<String> = {
-        let st = app.state::<PopoState>();
-        // Peek at the current language to decide whether to attach
-        // phrases at all. If GCP config isn't present yet, the batch
-        // path won't run anyway; falling through with empty phrases
-        // is correct for that edge case too.
-        let auto_detect = {
-            let guard = st.inner().gcp.lock().ok();
-            let lang = guard
-                .as_ref()
-                .and_then(|g| g.as_ref())
-                .map(|(c, _)| c.language_code.clone())
-                .unwrap_or_default();
-            lang.trim().is_empty() || lang.eq_ignore_ascii_case("auto")
-        };
-        if auto_detect {
-            Vec::new()
-        } else {
-            st.inner()
-                .dictionary
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default()
-        }
-    };
-
     // Pill: processing
     let _ = app.emit_to("pill", "pill:state:processing", ());
 
@@ -2281,342 +2129,137 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     //      via gcp::transcribe (old path, slow but reliable).
     //   C) GCP not configured → fake_transcribe (setup hint).
 
-    let (transcript, used_fake) = if let Some(handle) = streaming_handle {
-        // PATH A: Streaming was active. Fast finish.
-        let finish_start = std::time::Instant::now();
-        tracing::info!("streaming: finishing session (fast path)");
+    let (transcript, used_fake) = match live_session {
+        Some(mut session) => {
+            // Live API path. There is no second transport: the old batch
+            // `Recognize` fallback is gone, so a failure here fails
+            // closed with a real message rather than silently degrading.
+            let finish_start = std::time::Instant::now();
 
-        // 1. Wait for the chunk forwarder to stop (it checks `running`).
-        //    Timeout tightened from 500 → 150 ms: the forwarder
-        //    ticks at 100 ms intervals, so worst-case it sees
-        //    `running=false` within ~100 ms plus one final send.
-        //    500 ms was leaving 300-400 ms of dead time on every
-        //    release — the visible "streaming is slow" symptom
-        //    in activeContext.md bug 2.
-        if let Some(forwarder) = chunk_forwarder {
-            let join_start = std::time::Instant::now();
-            let joined = tokio::time::timeout(Duration::from_millis(150), forwarder).await;
-            tracing::info!(
-                "streaming: forwarder joined in {}ms (ok={})",
-                join_start.elapsed().as_millis(),
-                joined.is_ok()
-            );
-        }
+            // 1. Let the chunk forwarder observe `running == false` and
+            //    stop. It ticks at 100ms, so 150ms covers worst case
+            //    plus one final send. Session 27 tightened this from
+            //    500ms, which was adding 300-400ms of dead time to
+            //    every release.
+            if let Some(forwarder) = chunk_forwarder {
+                let join_start = std::time::Instant::now();
+                let joined = tokio::time::timeout(Duration::from_millis(150), forwarder).await;
+                tracing::info!(
+                    "transcribe_live: forwarder joined in {}ms (ok={})",
+                    join_start.elapsed().as_millis(),
+                    joined.is_ok()
+                );
+            }
 
-        // 2. Send any remaining un-forwarded samples as a final chunk.
-        {
-            let already_sent = sent_count.load(Ordering::Relaxed);
-            let remaining: Vec<f32> = {
-                match samples.lock() {
+            // 2. Flush whatever the forwarder didn't get to.
+            {
+                let already_sent = sent_count.load(Ordering::Relaxed);
+                let remaining: Vec<f32> = match samples.lock() {
                     Ok(g) => g.iter().skip(already_sent).copied().collect(),
                     Err(_) => Vec::new(),
+                };
+                if !remaining.is_empty() {
+                    let resampled = if sample_rate as usize == crate::audio::pcm::TARGET_SR {
+                        remaining
+                    } else {
+                        crate::audio::pcm::resample_to_16k(&remaining, sample_rate as usize)
+                    };
+                    let pcm_bytes = crate::audio::pcm::f32_to_pcm16_bytes(&resampled);
+                    if !pcm_bytes.is_empty() {
+                        if let Err(e) = session.send_audio(pcm_bytes).await {
+                            tracing::warn!("transcribe_live: final chunk not sent: {e:#}");
+                        }
+                    }
                 }
+            }
+
+            // 3. Close the turn and collect every final segment.
+            let outcome = session.end_utterance().await;
+
+            // Recycle or retire the socket. `goAway` means the server
+            // will drop the connection within ~60s, so don't keep it.
+            if session.is_expiring() {
+                tracing::info!("transcribe_live: socket is expiring, closing after this turn");
+                session.close().await;
+            }
+
+            match outcome {
+                Ok(t) => {
+                    tracing::info!(
+                        "transcribe_live: transcript returned in {}ms total",
+                        finish_start.elapsed().as_millis()
+                    );
+                    (t, false)
+                }
+                Err(e) => {
+                    let full = format_error_chain(&e);
+                    tracing::error!("transcribe_live: turn failed: {full}");
+                    let _ = app.emit_to(
+                        "pill",
+                        "pill:state:error",
+                        ErrorPayload::error("transcribe_failed", full),
+                    );
+                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                    let _ = app.emit_to("pill", "pill:state:sleep", ());
+                    return Ok(());
+                }
+            }
+        }
+        None => {
+            if let Some(forwarder) = chunk_forwarder {
+                forwarder.abort();
+            }
+
+            // No socket at release. Either GCP was never configured (in
+            // which case the setup hint is the correct, self-teaching
+            // output), or the socket failed to open, which is a real
+            // error the user needs to see.
+            let configured = {
+                let st = app.state::<PopoState>();
+                let guard = st.inner().gcp.lock().ok();
+                guard
+                    .as_ref()
+                    .and_then(|g| g.as_ref())
+                    .map(|(c, _)| c.is_configured())
+                    .unwrap_or(false)
             };
-            if !remaining.is_empty() {
-                let resampled = if sample_rate as usize == gcp::chirp::TARGET_SR {
-                    remaining
-                } else {
-                    gcp::chirp::resample_to_16k(&remaining, sample_rate as usize)
-                };
-                let pcm_bytes = gcp::chirp::f32_to_pcm16_bytes(&resampled);
-                if !pcm_bytes.is_empty() {
-                    if let Err(e) = handle.send_audio(pcm_bytes).await {
-                        tracing::warn!("streaming: failed to send final chunk: {e:?}");
-                    }
-                }
-            }
-        }
 
-        // 3. Half-close and collect the final transcript.
-        match handle.finish().await {
-            Ok(t) => {
-                tracing::info!(
-                    "streaming: finish() returned transcript in {}ms total",
-                    finish_start.elapsed().as_millis()
+            if configured {
+                tracing::error!("transcribe_live: no live session available at release");
+                let _ = app.emit_to(
+                    "pill",
+                    "pill:state:error",
+                    ErrorPayload::error(
+                        "transcribe_failed",
+                        "Couldn't reach the transcription service. Check your connection, and that the Vertex AI API is enabled with roles/aiplatform.user granted.",
+                    ),
                 );
-                (t, false)
+                tokio::time::sleep(Duration::from_millis(2000)).await;
+                let _ = app.emit_to("pill", "pill:state:sleep", ());
+                return Ok(());
             }
-            Err(e) => {
-                let full = format_error_chain(&e);
-                tracing::error!("streaming finish failed; attempting batch fallback");
-                // Fall back to batch transcribe as a last resort.
-                //
-                // If the streaming failure mentions "not found" AND we had
-                // a non-empty dictionary, Chirp 3 rejected speech-adaptation
-                // for this request. Docs claim adaptation is GA in both
-                // `us` and `eu` but Google's own examples only ever show
-                // the `us` region; in practice EU returns NOT_FOUND for
-                // inline phrase sets on some projects. Drop the adaptation
-                // on the retry so the user still gets their transcript.
-                let streaming_was_not_found = full.to_lowercase().contains("not found")
-                    || full.to_lowercase().contains("requested entity");
-                let batch_adaptation_for_this_attempt: Vec<String> = if streaming_was_not_found
-                    && !adaptation_phrases_batch.is_empty()
-                {
-                    tracing::warn!(
-                            "streaming failure is NotFound — retrying batch without {} adaptation phrase(s)",
-                            adaptation_phrases_batch.len()
-                        );
-                    Vec::new()
-                } else {
-                    adaptation_phrases_batch.clone()
-                };
-                tracing::info!("streaming: falling back to batch transcribe");
-                let gcp_snapshot: Option<(GcpConfig, Authenticator)> = {
-                    let state = app.state::<PopoState>();
-                    let guard = state
-                        .inner()
-                        .gcp
-                        .lock()
-                        .expect("PopoState gcp mutex poisoned");
-                    guard.as_ref().cloned()
-                };
-                match gcp_snapshot {
-                    Some((ref config, ref auth)) => {
-                        let language_codes =
-                            resolve_language_codes(config, app.state::<PopoState>().inner());
-                        let features =
-                            resolve_recognition_features(app.state::<PopoState>().inner());
-                        // Same per-app resolver as on_press.
-                        let effective_prompt = resolve_effective_prompt(
-                            app.state::<PopoState>().inner(),
-                            app_name.as_deref(),
-                            forced_mode_id.as_deref(),
-                        )
-                        .0;
-                        let features_clone = features.clone();
-                        match gcp::transcribe(
-                            auth,
-                            config,
-                            &samples,
-                            sample_rate,
-                            &language_codes,
-                            features,
-                            &effective_prompt,
-                            &batch_adaptation_for_this_attempt,
-                        )
-                        .await
-                        {
-                            Ok(t) => (t, false),
-                            Err(e2) => {
-                                let full2 = format_error_chain(&e2);
-                                // If "invalid argument" and we had a custom prompt,
-                                // retry without prompt (multi-lang + prompt incompatibility)
-                                if full2.to_lowercase().contains("invalid argument")
-                                    && !effective_prompt.is_empty()
-                                {
-                                    tracing::warn!("batch fallback: retrying without custom_prompt (multi-language + prompt may be incompatible)");
-                                    match gcp::transcribe(
-                                        auth,
-                                        config,
-                                        &samples,
-                                        sample_rate,
-                                        &language_codes,
-                                        features_clone,
-                                        "",
-                                        &batch_adaptation_for_this_attempt,
-                                    )
-                                    .await
-                                    {
-                                        Ok(t) => (t, false),
-                                        Err(e3) => {
-                                            let full3 = format_error_chain(&e3);
-                                            tracing::error!(
-                                                "batch fallback without prompt also failed"
-                                            );
-                                            let _ = app.emit_to(
-                                                "pill",
-                                                "pill:state:error",
-                                                ErrorPayload::error("transcribe_failed", full3),
-                                            );
-                                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                                            let _ = app.emit_to("pill", "pill:state:sleep", ());
-                                            return Ok(());
-                                        }
-                                    }
-                                } else {
-                                    tracing::error!("batch fallback also failed");
-                                    let _ = app.emit_to(
-                                        "pill",
-                                        "pill:state:error",
-                                        ErrorPayload::error("transcribe_failed", full2),
-                                    );
-                                    tokio::time::sleep(Duration::from_millis(2000)).await;
-                                    let _ = app.emit_to("pill", "pill:state:sleep", ());
-                                    return Ok(());
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        // GCP config vanished between press and release — shouldn't
-                        // happen, but surface the streaming error.
-                        let _ = app.emit_to(
-                            "pill",
-                            "pill:state:error",
-                            ErrorPayload::error("transcribe_failed", full),
-                        );
-                        tokio::time::sleep(Duration::from_millis(2000)).await;
-                        let _ = app.emit_to("pill", "pill:state:sleep", ());
-                        return Ok(());
-                    }
-                }
-            }
-        }
-    } else {
-        // PATH B or C: No streaming handle. Use batch or fake.
-        let gcp_snapshot: Option<(GcpConfig, Authenticator)> = {
-            let state = app.state::<PopoState>();
-            let guard = state
-                .inner()
-                .gcp
-                .lock()
-                .expect("PopoState gcp mutex poisoned");
-            guard.as_ref().cloned()
-        };
 
-        match gcp_snapshot {
-            Some((ref config, ref auth)) => {
-                // PATH B: batch transcribe fallback.
-                let language_codes =
-                    resolve_language_codes(config, app.state::<PopoState>().inner());
-                let features = resolve_recognition_features(app.state::<PopoState>().inner());
-                // Same per-app resolver as on_press.
-                let effective_prompt = resolve_effective_prompt(
-                    app.state::<PopoState>().inner(),
-                    app_name.as_deref(),
-                    forced_mode_id.as_deref(),
-                )
-                .0;
-                let features_clone = features.clone();
-                let features_for_retry = features_clone.clone();
-                match gcp::transcribe(
-                    auth,
-                    config,
-                    &samples,
-                    sample_rate,
-                    &language_codes,
-                    features,
-                    &effective_prompt,
-                    &adaptation_phrases_batch,
-                )
-                .await
-                {
-                    Ok(t) => (t, false),
-                    Err(e) => {
-                        let full = format_error_chain(&e);
-                        // If the failure looks like speech-adaptation was
-                        // rejected (NOT_FOUND / "Requested entity was not
-                        // found") AND we actually had a dictionary, retry
-                        // without adaptation. See the streaming-error
-                        // branch above for why this happens on EU region.
-                        if (full.to_lowercase().contains("not found")
-                            || full.to_lowercase().contains("requested entity"))
-                            && !adaptation_phrases_batch.is_empty()
-                        {
-                            tracing::warn!(
-                                "batch: NotFound error with {} adaptation phrases — retrying without adaptation",
-                                adaptation_phrases_batch.len()
-                            );
-                            match gcp::transcribe(
-                                auth,
-                                config,
-                                &samples,
-                                sample_rate,
-                                &language_codes,
-                                features_for_retry,
-                                &effective_prompt,
-                                &[],
-                            )
-                            .await
-                            {
-                                Ok(t) => (t, false),
-                                Err(e_noadapt) => {
-                                    let full_noadapt = format_error_chain(&e_noadapt);
-                                    tracing::error!(
-                                        "batch fallback without adaptation also failed"
-                                    );
-                                    let _ = app.emit_to(
-                                        "pill",
-                                        "pill:state:error",
-                                        ErrorPayload::error("transcribe_failed", full_noadapt),
-                                    );
-                                    tokio::time::sleep(Duration::from_millis(2000)).await;
-                                    let _ = app.emit_to("pill", "pill:state:sleep", ());
-                                    return Ok(());
-                                }
-                            }
-                        }
-                        // If "invalid argument" and we had a custom prompt,
-                        // retry without prompt (multi-lang + prompt incompatibility)
-                        else if full.to_lowercase().contains("invalid argument")
-                            && !effective_prompt.is_empty()
-                        {
-                            tracing::warn!("batch: retrying without custom_prompt (multi-language + prompt may be incompatible)");
-                            match gcp::transcribe(
-                                auth,
-                                config,
-                                &samples,
-                                sample_rate,
-                                &language_codes,
-                                features_clone,
-                                "",
-                                &adaptation_phrases_batch,
-                            )
-                            .await
-                            {
-                                Ok(t) => (t, false),
-                                Err(e2) => {
-                                    let full2 = format_error_chain(&e2);
-                                    tracing::error!("batch fallback without prompt also failed");
-                                    let _ = app.emit_to(
-                                        "pill",
-                                        "pill:state:error",
-                                        ErrorPayload::error("transcribe_failed", full2),
-                                    );
-                                    tokio::time::sleep(Duration::from_millis(2000)).await;
-                                    let _ = app.emit_to("pill", "pill:state:sleep", ());
-                                    return Ok(());
-                                }
-                            }
-                        } else {
-                            tracing::error!("GCP transcription failed");
-                            let _ = app.emit_to(
-                                "pill",
-                                "pill:state:error",
-                                ErrorPayload::error("transcribe_failed", full),
-                            );
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                            let _ = app.emit_to("pill", "pill:state:sleep", ());
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-            None => {
-                // PATH C: no GCP config.
-                tracing::info!("no GCP config yet — using fake transcribe");
-                (gcp::fake_transcribe(&samples).await, true)
-            }
+            tracing::info!("no GCP config yet — using fake transcribe");
+            (gcp::fake_transcribe(&samples).await, true)
         }
     };
 
-    // Chirp 3's `CustomPromptConfig.custom_prompt` (Session 29) now
+    // Mode prompts are applied by Gemini 3.5 Flash-Lite after
     // handles mode-aware formatting during transcription. No separate
     // post-processing round-trip is needed — the transcript arriving
-    // from Chirp is already formatted when Settings → Auto-format is
+    // transcription, not during it. Settings → Auto-format is
     // enabled.
 
     // ── Prompt-echo guard ───────────────────────────────────────────────────────────
     //
-    // Second layer of defence against Chirp 3's prompt-echo
+    // Second layer of defence against prompt-echo
     // hallucination: even after the duration + amplitude guards above,
     // edge cases (e.g. half a second of a voiced consonant that didn't
     // quite parse) can still trigger the model to echo the prompt.
     //
     // Heuristic: take the transcript's first 30 lowercase chars and
     // see whether that substring appears anywhere inside the lowercase
-    // custom_prompt. If it does, Chirp is echoing the prompt and we
+    // the prompt. If it does, the model is echoing it and we
     // discard the transcript rather than pasting it.
     //
     // This only runs when auto-format is on (non-empty prompt) and
@@ -2648,7 +2291,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
 
     // ── Gemini smart-cleanup (Session 34) ────────────────────────
     //
-    // Chirp's custom_prompt is a STYLE biasing layer — it handles
+    // SMART transcription cleans disfluencies inline, but it
     // tone / domain vocabulary / punctuation density but cannot do
     // semantic rewrites like "the speaker said sorry + re-stated,
     // keep only the correction". For that we need an LLM pass.
@@ -2656,14 +2299,19 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
     // When the user has `Settings.autoFormat = true` AND configured
     // a Gemini API key (free from ai.dev), we call Gemini 2.5
     // Flash-Lite with BASELINE_CORRECTION + the mode prompt as
-    // system instruction, and the Chirp transcript as the user turn.
-    // Gemini returns a polished transcript that Chirp's acoustic
+    // system instruction, and the transcript as the user turn.
+    // Gemini returns a polished transcript the speech model
     // layer alone couldn't produce.
     //
     // Fail-open: any Gemini error (timeout, network, blocked
-    // content, API quota) falls back to the raw Chirp transcript
+    // content, API quota) falls back to the the raw transcript transcript
     // so the user still gets a paste. Logged for diagnosis.
-    let transcript = {
+    // The STT transcript before any LLM pass. Kept so the cost estimate
+    // bills the speech-to-text call on what the STT model actually
+    // emitted, not on Flash-Lite's (often much shorter) rewrite.
+    let raw_stt_transcript = transcript.clone();
+
+    let (transcript, polish_applied) = {
         let st = app.state::<PopoState>();
         // Session 35: gate Gemini polish on auto_format_enabled
         // directly (not a separate smart_cleanup flag).
@@ -2705,7 +2353,7 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             None
         } else if provider == "vertex" {
             // Vertex reuses the GCP service account already configured
-            // for Chirp. Snapshot (config, auth) then mint a token.
+            // for transcription. Snapshot (config, auth) then mint a token.
             let gcp_snap = st.inner().gcp.lock().ok().and_then(|g| g.clone());
             let location = st
                 .inner()
@@ -2775,19 +2423,19 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             match gcp::gemini::polish(backend, &gemini_system, &transcript).await {
                 Ok(polished) => {
                     tracing::info!("gemini: smart-cleanup applied");
-                    polished
+                    (polished, true)
                 }
                 Err(_) => {
-                    tracing::warn!("gemini: smart-cleanup failed; pasting Chirp output raw");
-                    transcript
+                    tracing::warn!("gemini: smart-cleanup failed; pasting the raw transcript");
+                    (transcript, false)
                 }
             }
         } else {
             // Smart cleanup not applicable — either the toggle is off,
             // the provider's credentials aren't set, we're on the
             // fake-transcribe path, or there's no prompt / transcript.
-            // Skip silently.
-            transcript
+            // Skip silently. Tiers 1 and 2 always land here.
+            (transcript, false)
         }
     };
 
@@ -2885,10 +2533,23 @@ async fn on_release(app: &AppHandle) -> anyhow::Result<()> {
             let now_ms = unix_now_ms();
             let duration_ms = now_ms.saturating_sub(started_at_ms);
             let word_count = transcript.split_whitespace().count();
-            // Chirp 3 pricing: $0.004 per 15-second increment (rounded up).
-            // Matches the formula in the frontend's stats-compute.ts.
-            let billed_increments = ((duration_ms as f64 / 15_000.0).ceil()) as u64;
-            let cost = (billed_increments as f64 * 0.004 * 10000.0).round() / 10000.0;
+            // Spend estimate. Gemini 3.5 Transcribe Live bills tokens,
+            // not 15-second wall-clock increments, and tier 3 also pays
+            // for the Flash-Lite polish call — which the previous code
+            // never counted at all. See gcp/cost.rs.
+            let cost = gcp::cost::session_cost_usd(
+                duration_ms,
+                &transcript,
+                if polish_applied {
+                    Some(gcp::cost::PolishUsage {
+                        system_prompt: &effective_prompt_for_guard,
+                        raw_transcript: &raw_stt_transcript,
+                        polished: &transcript,
+                    })
+                } else {
+                    None
+                },
+            );
             let lang = {
                 let state = app.state::<PopoState>();
                 let guard = state.inner().gcp.lock().ok();

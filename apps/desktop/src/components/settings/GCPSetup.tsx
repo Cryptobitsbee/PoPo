@@ -20,7 +20,7 @@ import GCPSetupWizard from "../wizard/GCPSetupWizard";
  *   2. Manual edit — path + project inputs + Test button below.
  *
  * Both flows end with Rust's PopoState.gcp populated, which flips the
- * hotkey::on_release handler from fake_transcribe to the real Chirp 2
+ * hotkey::on_release handler from fake_transcribe to the real speech engine
  * gRPC call.
  *
  * Sync strategy for the inline form:
@@ -122,7 +122,7 @@ export default function GCPSetup() {
       // 2. Ask Rust to mint a real OAuth2 token against Google. This
       //    proves: (a) the service-account JSON parses, (b) the key
       //    is accepted by oauth2.googleapis.com, (c) the project has
-      //    Speech-to-Text enabled (if the user scoped the token that
+      //    the Vertex AI API enabled (if the user scoped the token that
       //    way).
       const res = await invoke<{ ok: boolean; message: string }>(
         "cmd_gcp_test_connection",
@@ -236,7 +236,7 @@ export default function GCPSetup() {
             }}
           >
             Original path to the service-account key. popo never copies the
-            JSON; moving or deleting it pauses Speech-to-Text and Vertex AI.
+            JSON; moving or deleting it pauses transcription and AI formatting.
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -388,7 +388,7 @@ function TestStatus({
   lastOk: boolean | null;
   note: string | null;
 }) {
-  if (testing) return <>Contacting Speech-to-Text v2…</>;
+  if (testing) return <>Contacting Vertex AI…</>;
   if (lastTest == null) return <>Not tested yet.</>;
   if (lastOk === true) {
     return (

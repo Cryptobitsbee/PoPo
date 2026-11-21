@@ -1,3 +1,14 @@
+> # SUPERSEDED
+>
+> This document describes Chirp 3 / Speech-to-Text v2 transcription, which PoPo **no longer uses**.
+> Speech-to-text moved to `gemini-3.5-transcribe-live-preview` on the
+> Vertex AI Live API. See **[GEMINI_TRANSCRIBE_LIVE.md](./GEMINI_TRANSCRIBE_LIVE.md)**
+> for the current engine reference.
+>
+> Kept as historical record: the reasoning here explains why several
+> constraints existed (the `["auto"]` locale requirement, the EU
+> multi-region move, the PhraseSet adaptation limits) and why removing
+> them was a real improvement rather than a cosmetic swap.
 # Chirp 3 Transcription: Enhanced multilingual accuracy
 
 > Saved Session 29. Source: Google Cloud Speech-to-Text v2 documentation.

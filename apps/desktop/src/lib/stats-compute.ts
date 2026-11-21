@@ -19,33 +19,53 @@ export interface StatsMetrics {
   totalWords: number;
   totalSessions: number;
   totalMs: number;
-  /** Estimated GCP Chirp STT cost in USD. */
+  /** Estimated speech + AI spend in USD. */
   gcpCostUsd: number;
 }
 
 /**
  * Compute the 4-number headline row.
  *
- * GCP Chirp 2 standard tier (late 2025): $0.004 per 15-second increment
- * ($0.016/min). We simplify the display by ignoring the 60-minutes-per-
- * month free allowance — accurate enough for a quick "how much did I
- * spend" gauge, and errs on the conservative (over-estimate) side.
+ * Cost comes from each session's stored `gcpCostEstimate`, which Rust
+ * computes at capture time with the pricing of whichever engine actually
+ * ran. Summing the stored values is what keeps history correct across
+ * the Chirp 3 to Gemini 3.5 Transcribe Live migration: Chirp-era
+ * sessions keep Chirp-era pricing, and newer sessions carry token-based
+ * pricing, without this function needing to know which is which.
+ *
+ * Two bugs previously lived here. It recomputed cost from total duration
+ * and ignored the stored per-session value entirely, and it applied
+ * Chirp's 15-second rounding ONCE over the aggregate rather than per
+ * request. For 100 four-second dictations that reported $0.108 against a
+ * true $0.40, a roughly 4x under-estimate, while the comment claimed it
+ * over-estimated.
+ *
+ * The fallback below only exists for very old records written before
+ * `gcpCostEstimate` was persisted. It rounds per session, which is how
+ * Chirp actually billed.
  */
+const LEGACY_CHIRP_USD_PER_15S = 0.004;
+
 export function computeMetrics(sessions: Session[]): StatsMetrics {
   let totalWords = 0;
   let totalMs = 0;
+  let gcpCostUsd = 0;
   for (const s of sessions) {
     totalWords += s.wordCount;
     totalMs += s.durationMs;
+    if (typeof s.gcpCostEstimate === "number") {
+      gcpCostUsd += s.gcpCostEstimate;
+    } else {
+      gcpCostUsd +=
+        Math.ceil(s.durationMs / 1000 / 15) * LEGACY_CHIRP_USD_PER_15S;
+    }
   }
-  const billedSeconds = totalMs / 1000;
-  const billedIncrements = Math.ceil(billedSeconds / 15);
-  const gcpCostUsd = billedIncrements * 0.004;
   return {
     totalWords,
     totalSessions: sessions.length,
     totalMs,
-    gcpCostUsd,
+    // Float addition drifts; round to the cent-fraction we display.
+    gcpCostUsd: Math.round(gcpCostUsd * 10000) / 10000,
   };
 }
 

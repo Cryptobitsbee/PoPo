@@ -1,3 +1,14 @@
+> # SUPERSEDED
+>
+> This document describes the Google Speech-to-Text v2 API, which PoPo **no longer uses**.
+> Speech-to-text moved to `gemini-3.5-transcribe-live-preview` on the
+> Vertex AI Live API. See **[GEMINI_TRANSCRIBE_LIVE.md](./GEMINI_TRANSCRIBE_LIVE.md)**
+> for the current engine reference.
+>
+> Kept as historical record: the reasoning here explains why several
+> constraints existed (the `["auto"]` locale requirement, the EU
+> multi-region move, the PhraseSet adaptation limits) and why removing
+> them was a real improvement rather than a cosmetic swap.
 # Google Cloud Speech v2 API reference
 
 > Saved Session 29. Condensed from the official `google.cloud.speech.v2`

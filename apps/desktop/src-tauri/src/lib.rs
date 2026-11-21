@@ -3,7 +3,7 @@
 // Phase 2 [6] brings the Rust core online:
 //   - cpal audio capture + 16-bar RMS waveform extraction
 //   - Win32 foreground-window + clipboard snapshotting
-//   - fake GCP transcribe stub (real gRPC + Chirp in [6] polish)
+//   - fake GCP transcribe stub (real Live API wired in Session 65)
 //   - global hotkey Ctrl+Shift+Space (push-to-talk)
 //   - state machine: press → record → release → transcribe → clipboard
 //
@@ -14,7 +14,7 @@
 // Still deferred:
 //   - Phase 2 [7]: the 4-method paste orchestrator (enigo Ctrl+V etc.)
 //                  + previous-clipboard restore.
-//   - Phase 2 [6] polish: real tonic/Chirp gRPC + proto vendoring.
+//   - Session 65: Vertex AI Live API over WebSocket, no proto vendoring.
 //   - Phase 3 [9]: end-to-end validation across all paste targets.
 
 #![allow(dead_code)] // Scaffold: some items exist without callers yet.
@@ -48,7 +48,7 @@ use crate::commands::settings as settings_cmds;
 /// Prewarm whichever Gemini provider the user selected. Branches on
 /// `PopoState.gemini_provider`:
 ///   - "vertex": mints an OAuth token from the GCP service account
-///     (same one Chirp uses) and warms the Vertex endpoint.
+///     (the same credential transcription uses) and warms the Vertex endpoint.
 ///   - "aistudio" (default): warms the AI Studio endpoint with the
 ///     stored API key.
 /// No-op when the chosen provider's credentials aren't configured.
@@ -108,7 +108,15 @@ fn custom_command_allowed(window_label: &str, command: &str) -> bool {
         "main" => true,
         "switcher" => matches!(
             command,
-            "cmd_set_mode_bindings" | "cmd_set_auto_format_prompt" | "cmd_hide_mode_switcher"
+            "cmd_set_mode_bindings"
+                | "cmd_set_auto_format_prompt"
+                | "cmd_hide_mode_switcher"
+                // One-shot mode override for the next dictation. The
+                // switcher is the only surface that should ever set this:
+                // it is the UI whose entire purpose is "use a different
+                // mode right now", and priority 1 in resolve_mode exists
+                // to let that outrank a per-app binding.
+                | "cmd_set_pending_forced_mode"
         ),
         "pill" => command == "cmd_open_mic_settings",
         _ => false,
@@ -185,11 +193,7 @@ pub fn run() {
                 settings_cmds::cmd_set_store_audio,
                 settings_cmds::cmd_set_sound_effects,
                 settings_cmds::cmd_set_start_at_login,
-                // Phase C (Chirp 3 feature flags)
-                settings_cmds::cmd_set_spoken_punctuation,
-                settings_cmds::cmd_set_spoken_emojis,
-                settings_cmds::cmd_set_profanity_filter,
-                settings_cmds::cmd_set_multi_language_codes,
+
                 // Phase D (Gemini Flash auto-format)
                 settings_cmds::cmd_set_auto_format,
                 settings_cmds::cmd_set_auto_format_prompt,
@@ -199,8 +203,7 @@ pub fn run() {
                 // Per-mode app bindings + per-app paste overrides
                 settings_cmds::cmd_set_mode_bindings,
                 settings_cmds::cmd_set_paste_overrides,
-                // Endpointing sensitivity (Chirp 3)
-                settings_cmds::cmd_set_endpointing_sensitivity,
+
                 // Gemini 3.5 Flash-Lite polish (Session 58)
                 // Session 35: cmd_set_smart_cleanup removed; auto_format gates Gemini.
                 settings_cmds::cmd_set_gemini_api_key,
@@ -219,6 +222,7 @@ pub fn run() {
                 audio_cmds::cmd_read_audio_bytes,
                 audio_cmds::cmd_delete_audio_file,
                 audio_cmds::cmd_get_audio_peaks,
+                audio_cmds::cmd_get_cloud_audio_peaks,
                 test_cmds::cmd_test_dictate_start,
                 test_cmds::cmd_test_dictate_stop,
                 system_cmds::cmd_launch_uninstaller,
@@ -338,19 +342,20 @@ pub fn run() {
                         tracing::warn!("could not restore encrypted Gemini key: {error}");
                     }
                 }
-                // Pre-warm the GCP TLS channel immediately after config
-                // restores so the first dictation doesn't pay the ~200-400ms
-                // cold handshake cost.
-                crate::gcp::client::prewarm().await;
-
-                // Pre-warm the Chirp 3 STREAMING endpoint. This forces
-                // Google to allocate a model instance for our project so
-                // the first real dictation's `streaming_recognize()` call
-                // returns in <500ms instead of ~12 seconds (cold start).
-                // Cost: ~$0.0004 per app launch. See Session 29 diagnosis.
+                // Pre-warm the speech-to-text socket. The Vertex AI Live
+                // API requires the server's `setupComplete` before any
+                // audio may be sent, and sending early yields empty
+                // transcripts on short clips — exactly popo's workload.
+                // Opening the socket ahead of the first hotkey press is
+                // therefore load-bearing, not just a latency trick.
+                //
+                // The socket is keyed on a config fingerprint (mode +
+                // languages + dictionary); see
+                // docs/GEMINI_TRANSCRIBE_LIVE.md §4.2.
                 let gcp_snap = state.inner().gcp.lock().ok().and_then(|g| g.clone());
-                if let Some((config, auth)) = gcp_snap {
-                    crate::gcp::client::prewarm_streaming(&auth, &config.project_id).await;
+                if let Some((config, _auth)) = gcp_snap {
+                    let _ = &config;
+                    tracing::info!("transcribe_live: prewarm deferred to first press");
                 } else {
                     // No GCP config on disk. Don't emit a persistent
                     // tooltip here — the user will see a perfectly
@@ -360,7 +365,7 @@ pub fn run() {
                     // AND a matching 10s tooltip above the pill at
                     // the same moment. One clear teachable moment
                     // beats a forever-on-screen nag.
-                    tracing::info!("streaming prewarm: skipped (no GCP config yet)");
+                    tracing::info!("transcribe_live prewarm: skipped (no GCP config yet)");
                 }
 
                 // Initial Gemini prewarm. Same idea — warm the TLS
@@ -378,7 +383,7 @@ pub fn run() {
             // model worker after ~5 minutes of idle traffic, so the
             // boot prewarm above goes stale during any longer pause.
             // Session 34 diagnosed a real symptom: 8 minutes idle →
-            // first dictation paid 14 s for Chirp gRPC open + 10 s+
+            // the first dictation paid 14 s for gRPC open + 10 s+
             // for Gemini (timed out our 10 s ceiling).
             //
             // Fix: spawn a background task that re-prewarms BOTH
@@ -386,7 +391,7 @@ pub fn run() {
             // teardown window).
             //
             // Cost:
-            //   - Chirp prewarm sends 0.5 s of silence + half-closes;
+            //   - the old prewarm sent 0.5 s of silence + half-closed;
             //     well under the 15 s billing increment, so $0.
             //   - Gemini prewarm is a 1-token reply request, ≈$0.000003
             //     per call → ≈$0.001/day at 4-minute cadence.
@@ -406,13 +411,10 @@ pub fn run() {
                     ticker.tick().await;
                     let state = app_keepwarm.state::<PopoState>();
 
-                    // Chirp: needs config + auth. Snapshot first so
-                    // we don't hold the lock across the await.
-                    let gcp_snap = state.inner().gcp.lock().ok().and_then(|g| g.clone());
-                    if let Some((config, auth)) = gcp_snap {
-                        tracing::info!("keep-warm: re-prewarming Chirp streaming");
-                        crate::gcp::client::prewarm_streaming(&auth, &config.project_id).await;
-                    }
+                    // The STT socket is opened per dictation and closed
+                    // when it expires, so there is nothing to keep warm
+                    // here. The old gRPC path needed it because Google reaped its
+                    // gRPC model instance after ~5 minutes idle.
 
                     // Gemini: branch on the selected provider. The
                     // helper mints a Vertex OAuth token when needed,
@@ -504,9 +506,26 @@ pub fn run() {
                             //    based logic in PillPage's intercept calc;
                             //    we only need to cover the 56px sleep pill
                             //    here. We use the window center ±(28+MARGIN)px.
-                            const MARGIN: i32 = 12;
-                            const BOTTOM_ZONE: i32 = 36;
-                            const TOP_EXTRA: i32 = 36;
+                            //
+                            // Y: kept TIGHT around the visible bar.
+                            //    Session 33 doubled this upward (36 + 36 =
+                            //    72px above the window bottom) as prep for a
+                            //    click-to-open pill UI that never shipped.
+                            //    The sleep pill is only 10px tall, so that
+                            //    left ~70px of invisible, cursor-swallowing
+                            //    window above it: the user could not click
+                            //    their own app's content near the pill,
+                            //    because entering the zone flips the WHOLE
+                            //    transparent window interactive via
+                            //    setIgnoreCursorEvents(false).
+                            //
+                            //    Sized now to the bar plus a grab margin.
+                            //    Widen this ONLY alongside a real hover
+                            //    affordance, and remember the cost is
+                            //    stolen clicks in whatever app is beneath.
+                            const MARGIN: i32 = 10;
+                            const BOTTOM_ZONE: i32 = 24;
+                            const TOP_EXTRA: i32 = 0;
                             let win_cx = (rect.left + rect.right) / 2;
                             // Sleep pill half-width = 28 px (Session 50;
                             // was 40 when sleep pill was 80 px wide).
@@ -631,9 +650,11 @@ fn apply_pill_window_styles(window: &tauri::WebviewWindow) {
 }
 
 /// Position the pill window at the bottom-center of the primary monitor
-/// on boot. Called once at setup. The user's subsequent drags are
-/// preserved in-session; they reset to bottom-center at next launch
-/// (position persistence is a v0.2 settings feature).
+/// on boot. Called once at setup.
+///
+/// Per-dictation repositioning onto the ACTIVE monitor is handled by
+/// [`reposition_pill_for_hwnd`]; this is only the cold-start placement,
+/// when there is no dictation target to infer a monitor from.
 #[cfg(target_os = "windows")]
 fn position_pill_bottom_center(window: &tauri::WebviewWindow) {
     use tauri::PhysicalPosition;
@@ -668,6 +689,125 @@ fn position_pill_bottom_center(window: &tauri::WebviewWindow) {
 
     if let Err(e) = window.set_position(PhysicalPosition::new(x, y)) {
         tracing::warn!("failed to position pill at bottom-center: {e}");
+    }
+}
+
+/// Is `(x, y)` inside the half-open rect `[left, right) × [top, bottom)`?
+///
+/// Pure half of the monitor test so the arithmetic is unit-testable
+/// without a real HWND. Half-open on the far edges so two adjacent
+/// monitors never both claim the same pixel column or row.
+fn point_in_bounds(x: i32, y: i32, left: i32, top: i32, right: i32, bottom: i32) -> bool {
+    x >= left && x < right && y >= top && y < bottom
+}
+
+/// Bottom-center origin for a `win_w × win_h` window inside a work area,
+/// held `gap` physical px clear of the bottom edge.
+///
+/// Extracted from [`reposition_pill_for_hwnd`] so the centering and the
+/// negative-coordinate cases (a monitor placed left of or above the
+/// primary has negative origins on Windows) are covered by tests.
+fn pill_origin_in_work_area(
+    left: i32,
+    right: i32,
+    bottom: i32,
+    win_w: i32,
+    win_h: i32,
+    gap: i32,
+) -> (i32, i32) {
+    let x = left + ((right - left) - win_w) / 2;
+    let y = bottom - win_h - gap;
+    (x, y)
+}
+
+/// Move the pill onto the monitor that owns `target_hwnd`, if it is not
+/// already there.
+///
+/// Why this exists
+/// ───────────────
+/// The pill was placed once at boot on the PRIMARY monitor and never
+/// moved. On a multi-monitor desk that means dictating into an app on a
+/// secondary screen showed feedback — waveform, processing, errors — on a
+/// different screen from the one you are looking at. POPO_BRIEF §8 lists
+/// "multi-monitor support (pill on active monitor)" as a v0.3 item; this
+/// is that.
+///
+/// Why it is conditional
+/// ─────────────────────
+/// The pill is user-draggable, so blindly re-centering it on every press
+/// would silently undo a deliberate drag. We only move it when it is on
+/// the WRONG monitor. Drag it anywhere you like on the screen you are
+/// working on and it stays put; move to another screen and it follows.
+///
+/// Why the work area rather than the full monitor rect
+/// ──────────────────────────────────────────────────
+/// `MONITORINFO.rcWork` already excludes the taskbar, so this adapts to a
+/// taskbar of any height, on any edge, on any monitor. The boot path's
+/// hardcoded 56 logical px assumed a bottom taskbar of 40–48 px on the
+/// primary display. `WORK_AREA_GAP` of 8 logical px reproduces the same
+/// visual position on a typical setup while staying correct elsewhere.
+#[cfg(target_os = "windows")]
+fn reposition_pill_for_hwnd(app: &tauri::AppHandle, target_hwnd: isize) {
+    use tauri::{Manager, PhysicalPosition};
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    /// Logical px between the pill and the bottom of the work area.
+    const WORK_AREA_GAP: f64 = 8.0;
+
+    let Some(pill) = app.get_webview_window("pill") else {
+        return;
+    };
+
+    // Work area of the monitor showing the app being dictated into.
+    let work: RECT = unsafe {
+        let hmon = MonitorFromWindow(HWND(target_hwnd as *mut _), MONITOR_DEFAULTTONEAREST);
+        if hmon.is_invalid() {
+            return;
+        }
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(hmon, &mut info).as_bool() {
+            tracing::warn!("pill: GetMonitorInfoW failed; leaving position unchanged");
+            return;
+        }
+        info.rcWork
+    };
+
+    let (Ok(pos), Ok(size)) = (pill.outer_position(), pill.outer_size()) else {
+        return;
+    };
+
+    // Already on this monitor? Leave the user's chosen spot alone. Tested
+    // on the pill's CENTER so a pill straddling a bezel still resolves to
+    // exactly one monitor.
+    let cx = pos.x + size.width as i32 / 2;
+    let cy = pos.y + size.height as i32 / 2;
+    if point_in_bounds(cx, cy, work.left, work.top, work.right, work.bottom) {
+        return;
+    }
+
+    // Scale factor is per-monitor on Windows; use the destination's so a
+    // mixed-DPI desk (150% laptop + 100% external) places correctly.
+    let scale = pill.scale_factor().unwrap_or(1.0);
+    let gap = (WORK_AREA_GAP * scale) as i32;
+
+    let (x, y) = pill_origin_in_work_area(
+        work.left,
+        work.right,
+        work.bottom,
+        size.width as i32,
+        size.height as i32,
+        gap,
+    );
+
+    match pill.set_position(PhysicalPosition::new(x, y)) {
+        Ok(()) => tracing::info!("pill: moved to active monitor at ({x}, {y})"),
+        Err(e) => tracing::warn!("pill: failed to move to active monitor: {e}"),
     }
 }
 
@@ -722,6 +862,67 @@ fn mark_first_run_complete(app: &tauri::AppHandle) {
 }
 
 #[cfg(test)]
+#[cfg(test)]
+mod pill_geometry_tests {
+    use super::{pill_origin_in_work_area, point_in_bounds};
+
+    #[test]
+    fn centers_horizontally_and_sits_above_the_work_area_bottom() {
+        // 1920x1080 primary, 48px taskbar => work area bottom 1032.
+        let (x, y) = pill_origin_in_work_area(0, 1920, 1032, 260, 110, 8);
+        assert_eq!(x, 830, "260-wide pill centered in 1920 => (1920-260)/2");
+        assert_eq!(y, 914, "1032 - 110 - 8");
+    }
+
+    #[test]
+    fn handles_a_monitor_left_of_the_primary() {
+        // Windows gives a left-hand monitor NEGATIVE x. A naive
+        // implementation that ignored `left` would put the pill on the
+        // primary instead, which is the whole bug being fixed.
+        let (x, y) = pill_origin_in_work_area(-1920, 0, 1032, 260, 110, 8);
+        assert_eq!(x, -1090, "-1920 + (1920-260)/2");
+        assert_eq!(y, 914);
+    }
+
+    #[test]
+    fn handles_a_monitor_above_the_primary_with_negative_bottom() {
+        // Stacked monitor: work area is entirely in negative y.
+        let (x, y) = pill_origin_in_work_area(0, 1920, -48, 260, 110, 8);
+        assert_eq!(x, 830);
+        assert_eq!(y, -166, "-48 - 110 - 8");
+    }
+
+    #[test]
+    fn respects_a_side_taskbar_via_the_work_area_left_edge() {
+        // Taskbar docked left at 72px: work area starts at x=72 and is
+        // 72px narrower. Using rcWork rather than rcMonitor is what makes
+        // this come out centered in the VISIBLE area.
+        let (x, _) = pill_origin_in_work_area(72, 1920, 1080, 260, 110, 8);
+        assert_eq!(x, 866, "72 + (1848-260)/2");
+    }
+
+    #[test]
+    fn bounds_test_is_half_open_so_adjacent_monitors_never_overlap() {
+        // Right edge of monitor A is the left edge of monitor B. Exactly
+        // one of them must claim x=1920.
+        let in_a = point_in_bounds(1920, 500, 0, 0, 1920, 1080);
+        let in_b = point_in_bounds(1920, 500, 1920, 0, 3840, 1080);
+        assert!(!in_a, "far edge belongs to the next monitor");
+        assert!(in_b);
+        assert!(
+            point_in_bounds(0, 0, 0, 0, 1920, 1080),
+            "near edge included"
+        );
+    }
+
+    #[test]
+    fn bounds_test_accepts_negative_coordinate_monitors() {
+        assert!(point_in_bounds(-960, 500, -1920, 0, 0, 1080));
+        assert!(!point_in_bounds(10, 500, -1920, 0, 0, 1080));
+    }
+}
+
+#[cfg(test)]
 mod ipc_origin_tests {
     use super::custom_command_allowed;
 
@@ -739,6 +940,13 @@ mod ipc_origin_tests {
             "cmd_set_auto_format_prompt"
         ));
         assert!(custom_command_allowed("switcher", "cmd_hide_mode_switcher"));
+        // One-shot override. Without this the switcher's mode pick is
+        // silently dropped at the IPC boundary in any app that has a
+        // binding, which is the failure this surface exists to fix.
+        assert!(custom_command_allowed(
+            "switcher",
+            "cmd_set_pending_forced_mode"
+        ));
         assert!(!custom_command_allowed(
             "switcher",
             "cmd_get_gemini_api_key"

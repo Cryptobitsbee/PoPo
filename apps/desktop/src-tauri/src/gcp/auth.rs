@@ -17,8 +17,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use gcp_auth::{CustomServiceAccount, TokenProvider};
 
-/// Scope required for Speech-to-Text v2.
-/// See https://cloud.google.com/speech-to-text/v2/docs/reference/rpc.
+/// Scope required for the Vertex AI Live API.
+/// See docs/GEMINI_TRANSCRIBE_LIVE.md.
 pub const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 
 /// Cached authenticator tied to one service-account key file.
@@ -63,7 +63,7 @@ impl Authenticator {
         source_file_available(&self.source_path)
     }
 
-    /// Mint (or return cached) OAuth2 access token for Speech-to-Text.
+    /// Mint (or return cached) OAuth2 access token for Vertex AI.
     ///
     /// Even though `gcp_auth` keeps parsed key material and tokens in
     /// memory, every use fails closed if the user-selected source JSON

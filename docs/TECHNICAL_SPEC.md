@@ -145,49 +145,110 @@ src-tauri/src/
 
 ## 5. Speech-to-Text
 
-### Decision: GCP Speech-to-Text v2, `StreamingRecognize` gRPC, Chirp 2 now → Chirp 3 when verified
+### Decision: Gemini 3.5 Transcribe Live over the Vertex AI Live API (WebSocket)
 
-The brief mandates this layer. Justification:
+PoPo transcribes with `gemini-3.5-transcribe-live-preview` on Vertex AI /
+Gemini Enterprise Agent Platform, over a `BidiGenerateContent` WebSocket.
+This replaced Google Chirp 3 (Speech-to-Text v2 over tonic gRPC). Full
+engine reference and migration record: `docs/GEMINI_TRANSCRIBE_LIVE.md`.
+The superseded Chirp docs remain as historical context.
 
-- **Multilingual accuracy, especially Indic languages**. Chirp is the best
-  of the non-closed-weights offerings we surveyed for Hindi, Telugu, and
-  English+Hindi code-switching.
-- **Streaming with interim results**. Gives us the ability to show (later)
-  a draft-in-pill as the user speaks, and more importantly gives us a
-  final transcript within ~100–300ms of speech end.
-- **Auto language detection** via Chirp's language-code list — removes the
-  need for the user to pick a language per session.
-- **Per 15s-increment pricing** at $0.016/min (standard tier) keeps daily
-  costs low; a 5-minute/day user pays ~$2.40/month to GCP.
+### Why we moved off Chirp 3
 
-### Model
+- **Latency and accuracy.** Google reports roughly 70% faster
+  voice-to-final-text versus Chirp 3, with live word error rate at 5.5%
+  (2.6% on the batch endpoint).
+- **`mode: "SMART"` removes an entire network hop for the default
+  case.** Disfluency removal, spoken self-correction resolution,
+  punctuation, capitalisation, and list/number/date formatting all happen
+  inside the transcription pass. PoPo's stock Auto mode previously paid a
+  full Gemini round trip for exactly that work.
+- **`custom_vocabulary` works with automatic language detection.**
+  Chirp's PhraseSet adaptation required a concrete locale and returned
+  NOT_FOUND against `["auto"]`, so the user Dictionary was silently
+  dropped whenever Auto-detect was on. That constraint is gone.
+- **Native code-switching.** `languageCodes: []` handles mid-utterance
+  language changes, which is why the explicit `multiLanguageCodes`
+  setting could be deleted.
+- **Smaller dependency surface.** `tonic`, `tonic-prost`, `prost`,
+  `prost-types`, `googleapis-tonic-google-cloud-speech-v2`, plus
+  `hyper`, `hyper-util`, `http`, `tower` and `tokio-stream` were all
+  removed in favour of one WebSocket and `serde_json`.
+- **Roughly half the cost:** about `$0.009/min` blended against Chirp's
+  `$0.016/min`.
 
-Launch with `chirp_2`, feature-gate `chirp_3`. Chirp 3 reached GA in Oct
-2025 per GCP release notes; we want to verify the model-id string
-(`chirp_3` vs `chirp_3_general` etc.) against the live API before making
-it the default.
+### Endpoint, model, and location
+
+```
+wss://aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent
+Authorization: Bearer {service-account OAuth token}
+model: projects/{project}/locations/global/publishers/google/models/gemini-3.5-transcribe-live-preview
+```
+
+Two details that are easy to get wrong:
+
+- The Vertex model ID carries a **`-preview` suffix**. The unsuffixed
+  `gemini-3.5-transcribe-live` is the AI Studio ID and does not resolve
+  here.
+- The model is served from **`global` only**, with single- and
+  multi-region "coming soon". There is no region setting. Do not reuse
+  `gemini::normalize_vertex_location`, which governs Flash-Lite's
+  genuine global/us/eu choice.
+
+### Request shape
+
+`setup` carries `inputAudioTranscription` with `languageCodes`,
+`customVocabulary` (capped at 1000 terms, best results under ~100), and
+`mode`, plus `realtimeInputConfig.automaticActivityDetection.disabled`
+for manual VAD. Audio is raw 16-bit PCM at 16 kHz mono little-endian,
+base64-encoded in ~100 ms chunks — unchanged from what
+`audio/processor.rs` already produced.
+
+### Two constraints that shape the architecture
+
+**`setupComplete` is a hard gate.** Google: sending audio before it
+arrives "can cause the session to cancel unexpectedly and may result in
+empty transcriptions, particularly on short audio clips." PoPo dictations
+are short. `LiveSession::open()` therefore does not return until the gate
+clears. This inverts the Session 27 design, which deliberately avoided
+awaiting stream open because Chirp blocked ~12s on response headers.
+
+**Setup parameters are immutable once processed.** `mode`,
+`languageCodes` and `customVocabulary` all live in `setup`, and all three
+vary per dictation, so one socket cannot switch tier mid-life. Sockets
+are therefore keyed on a config fingerprint; see
+`GEMINI_TRANSCRIBE_LIVE.md` §4.2.
+
+### Session limits
+
+Connection lifetime is ~10 minutes, with a `goAway` warning 60 seconds
+before close; PoPo finishes the current turn then reopens. **Session
+resumption is deliberately disabled** — it works by server-side caching
+audio and text, which is incompatible with PoPo's privacy posture.
 
 ### Auth
 
-User-provided **service account JSON** via Settings → GCP Setup. popo stores
-only the selected path/project/language in
-`%APPDATA%\ai.popo.desktop\gcp.json`; it never copies the key. The original
-JSON remains authoritative. `gcp-auth` may cache parsed key material and OAuth
-tokens in-process for performance, but every token access first verifies that
-the selected source path is still a regular file; deleting or moving it disables
-Speech-to-Text and Vertex AI immediately.
+Unchanged. The user-selected service-account JSON via `gcp::auth`, scope
+`cloud-platform`, which covers `aiplatform.googleapis.com`. Every token
+use first verifies the configured path is still a regular file, so
+deleting the key fails closed (Session 58). No API key, no new secret.
+
+The service account needs the **Vertex AI API enabled** and
+**`roles/aiplatform.user`**. Installs created before this migration
+likely hold only `roles/speech.client` and must be updated.
 
 ### Alternatives rejected
 
-- **Azure Speech** — good streaming, comparable price; loses on Indian
-  language quality vs Chirp in our listening tests.
-- **OpenAI Whisper (API)** — no realtime streaming endpoint in late 2025;
-  batch upload adds 400–800ms. Unacceptable.
-- **Deepgram** — excellent English latency but Indic accuracy not on par
-  with Chirp 3.
-- **On-device Whisper (whisper.cpp / ONNX)** — already argued against for
-  the default pipeline. Deferred to v1.0 as optional fallback.
-
+- **Staying on Chirp 3** — slower, more expensive, larger dependency
+  tree, and the Dictionary silently broke under auto-detect.
+- **`gemini-3.5-transcribe-preview` (batch)** — no streaming, so the
+  transcript could not start before the user released the hotkey.
+- **AI Studio instead of Vertex** — would introduce a second credential
+  (API key) alongside the service-account JSON users already configure,
+  and free-tier AI Studio traffic may be used to improve Google's
+  products.
+- **On-device Whisper** — still deferred to v1.0 as an optional offline
+  fallback.
 ## 6. Post-processing (AI polish)
 
 ### Decision: Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`), REST, master Auto-format switch

@@ -129,6 +129,44 @@
 
 ## Pending / Polish
 
+## Session 65 — Chirp 3 replaced by Gemini 3.5 Transcribe Live
+
+- [x] New `gcp/transcribe_live.rs` (23 tests): Vertex Live API WebSocket
+  client, `setupComplete` gate, manual VAD via `activityStart`/`activityEnd`,
+  writer task + cloneable `AudioSender`, `goAway` handling, config
+  fingerprint for warm-socket reuse.
+- [x] New `audio/pcm.rs` (7 tests): `TARGET_SR`, `resample_to_16k`,
+  `f32_to_pcm16_bytes` rescued out of `chirp.rs` before deleting it.
+- [x] New `gcp/cost.rs` (12 tests): token-based estimation including the
+  tier-3 Flash-Lite call, which was never counted before.
+- [x] Three-tier routing wired through `resolve_effective_prompt`; Auto
+  mode is prompt-less and uses SMART with no AI hop.
+- [x] Deleted `gcp/chirp.rs`, `gcp/streaming.rs`, `gcp/client.rs`, the five
+  batch-fallback call sites, `build_speech_adaptation`,
+  `resolve_recognition_features`, `resolve_endpointing_sensitivity`, five
+  `PopoState` fields, five `cmd_set_*` commands, `prewarm_streaming`.
+- [x] Removed 10 Cargo deps (tonic, tonic-prost, prost, prost-types,
+  googleapis-tonic-google-cloud-speech-v2, hyper, hyper-util, http, tower,
+  tokio-stream); added tokio-tungstenite; kept futures for the WS.
+- [x] Frontend: deleted five dead `Settings` fields paired with the Rust
+  command removal, new 29+57 language list without Tamil, seed modes v11,
+  `ModeCard` / `ModeEditor` restructured for the no-LLM mode, GCP wizard
+  moved to Vertex AI API + `roles/aiplatform.user`, DictionaryPage
+  auto-detect banner deleted.
+- [x] Fixed two pre-existing `stats-compute.ts` cost bugs (ignored stored
+  per-session estimate; aggregate rather than per-request rounding, a ~4x
+  under-estimate for short dictations).
+- [x] Validation: cargo test 69 passed / 0 failed, cargo check zero
+  warnings, cargo fmt clean, pnpm typecheck pass, pnpm build pass (5072
+  modules), zero Chirp references remaining under `apps/desktop/src`.
+- [ ] Real dictation smoke test against live Vertex credentials. Nothing
+  else proves the model ID and `global` location actually serve.
+- [ ] Remaining doc sweep (AUDIO_PIPELINE_V2, REALTIME_ANALYSIS,
+  COMPETITIVE_ANALYSIS, LANDING_PAGE_RESEARCH, POPO_BRIEF,
+  MICROSOFT_STORE_SUBMISSION_GUIDE, SECURITY_AUDIT_REPORT, .clinerules).
+- [ ] Owner action for existing installs: enable the Vertex AI API and
+  grant `roles/aiplatform.user`, or dictation fails.
+
 ## Session 64 — Installed OAuth, installer finish UI, and MSIX
 
 - [x] Trace `client_secret is missing` to `e0c63fa` removing the

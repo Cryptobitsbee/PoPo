@@ -25,34 +25,20 @@ tauri-plugin-autostart       = "2"
 tauri-plugin-single-instance = "2"
 
 # Audio capture. Wired in Phase 2 item [6].
-# (Resampling is hand-rolled in gcp/chirp.rs; rubato was removed after
+# (Resampling is hand-rolled in audio/pcm.rs; rubato was removed after
 # its FftFixedInOut chunk-size quirks caused runtime panics — see
 # Session 15 notes.)
 cpal = "0.15"
 
-# GCP Speech-to-Text v2 gRPC. Phase 2 [6] polish: real Chirp streaming.
-#
-# `googleapis-tonic-google-cloud-speech-v2` ships pre-compiled tonic
-# bindings for speech.googleapis.com v2. We do NOT need protoc on the
-# developer's machine because no .proto files are compiled here.
-#
-# tls-ring enables TLS via rustls + ring (no OpenSSL), matching what
-# gcp_auth uses so we don't pull in two crypto backends.
-tonic      = { version = "0.14", features = ["tls-ring", "tls-native-roots", "transport"] }
-tonic-prost = "0.14"
-prost      = "0.14"
-prost-types = "0.14"
-googleapis-tonic-google-cloud-speech-v2 = "0.34"
+# Google Cloud auth. The old Speech-to-Text v2 gRPC stack (tonic, prost,
+# googleapis-tonic-google-cloud-speech-v2) was removed when STT moved to
+# the Vertex AI Live API over WebSockets; see docs/GEMINI_TRANSCRIBE_LIVE.md.
+
 gcp_auth   = "0.12"
-hyper      = "1"
-hyper-util = { version = "0.1", features = ["tokio"] }
-http       = "1"
-tower      = "0.5"
 futures    = "0.3"
 
 # Async runtime.
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
 
 # Serde + JSON.
 serde      = { version = "1", features = ["derive"] }
@@ -90,13 +76,21 @@ uuid               = { version = "1", features = ["v4"] }
 once_cell          = "1"
 base64             = "0.22"
 
-# HTTP client for Gemini 3.5 Flash-Lite REST calls (post-Chirp
+# HTTP client for Gemini 3.5 Flash-Lite REST calls (post-transcription
 # transcript polish). rustls-tls features match our existing
 # tonic+rustls stack so we don't pull in OpenSSL as a second crypto
 # backend. No `default-features` so we skip cookies / gzip / brotli
 # that we don't need for a single JSON POST.
 reqwest            = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 miniz_oxide        = "0.8"
+
+# WebSocket client for the Vertex AI Live API (`BidiGenerateContent`),
+# which carries Gemini 3.5 Transcribe Live streaming speech-to-text.
+# `rustls-tls-native-roots` keeps us on the single rustls + native trust
+# store already used by reqwest — no second crypto backend, no OpenSSL.
+# tungstenite re-exports `http`, so building the request with an
+# `Authorization: Bearer` header needs no separate http dependency.
+tokio-tungstenite  = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 
 [features]
 # Placeholder — see default features in the brief.

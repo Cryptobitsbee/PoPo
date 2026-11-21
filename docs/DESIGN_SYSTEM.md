@@ -38,15 +38,16 @@ Authoritative CSS (drop into `src/styles/globals.css`):
   --bg-high:        #222222;
 
   /* Text */
-  --text-primary:   #EDEBE6;
-  --text-secondary: #7A786F;
-  --text-ghost:     #3A3836;
+  --text-primary:   #EDEBE6;   /* ~16:1  AAA          */
+  --text-secondary: #9A978C;   /* ~6.6:1 AA           */
+  --text-ghost:     #807E75;   /* ~4.8:1 AA normal    */
 
   /* Borders */
-  --border-faint:   #161614;
+  --border-faint:   #232320;
   --border-subtle:  #202020;
   --border-default: #2C2A27;
   --border-strong:  #3D3A36;
+  --border-control: #62605A;   /* 3.09:1 - WCAG 1.4.11 for control edges */
 
   /* Waveform */
   --wave-primary:   #EDEBE6;

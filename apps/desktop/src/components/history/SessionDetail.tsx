@@ -17,6 +17,20 @@ import { useSettingsStore } from "../../store/settingsStore";
 import { saveSession } from "../../lib/firestore";
 import { trackSync } from "../../store/syncLogStore";
 import { resolveCloudAudioUrl } from "../../lib/cloudAudio";
+import { computeWavPeaks } from "../../lib/wav-peaks";
+
+/**
+ * Resolved cloud download URLs, cached for the window's lifetime.
+ *
+ * `resolveCloudAudioUrl` calls Firebase `getDownloadURL`, a network round
+ * trip. Session 61 replaced durable stored URLs with this on-demand
+ * resolution for security, which is correct, but it means every expand of
+ * the same row paid that round trip again. That is the visible "Loading
+ * recording" delay. Caching in memory keeps the security property (no
+ * durable bearer URL is written to disk or Firestore) while making repeat
+ * opens instant.
+ */
+const cloudUrlCache = new Map<string, string>();
 
 /**
  * SessionDetail — expanded panel shown below a selected SessionRow.
@@ -56,6 +70,23 @@ export interface SessionDetailProps {
 
 const BAR_COUNT = 64;
 
+/**
+ * Peaks already computed this session, keyed by session id.
+ *
+ * Reopening a row should be instant. Without this, every expand re-ran
+ * the whole resolve-then-compute chain and the user watched the player
+ * rebuild itself each time.
+ */
+const peaksCache = new Map<string, number[]>();
+
+/**
+ * Waveform lifecycle. Collapsing "still working" and "definitively no
+ * data" into a single nullable array is what produced the three-stage
+ * flicker: loading text, then an "unavailable" label, then the real bars.
+ * They are different states and must render differently.
+ */
+type PeaksState = "loading" | "ready" | "unavailable";
+
 export default function SessionDetail({
   session,
   onCopy,
@@ -66,14 +97,19 @@ export default function SessionDetail({
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
-  const [peaks, setPeaks] = useState<number[] | null>(null);
+  const [peaks, setPeaks] = useState<number[] | null>(
+    () => peaksCache.get(session.id) ?? null,
+  );
+  const [peaksState, setPeaksState] = useState<PeaksState>(() =>
+    peaksCache.has(session.id) ? "ready" : "loading",
+  );
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
   // Inline-edit state. `editing` toggles a Textarea at the top of the
   // panel (replacing the audio player for focus) and swaps the action
-  // buttons to Done/Cancel. Chirp output isn't always perfect —
+  // buttons to Done/Cancel. Transcripts are not always perfect —
   // letting the user correct in-place is a valuable escape hatch.
   const [editing, setEditing] = useState(false);
   const [draftTranscript, setDraftTranscript] = useState("");
@@ -88,12 +124,27 @@ export default function SessionDetail({
 
     async function resolve() {
       // Priority 1: authenticated cloud object path (or legacy URL).
+      //
+      // NOTE: we deliberately do NOT `fetch()` this URL to grab bytes for
+      // the waveform. Firebase Storage does not send
+      // `Access-Control-Allow-Origin`, so a cross-origin fetch from the
+      // webview is blocked by CORS. Media elements are exempt from CORS,
+      // which is why playback works from the same URL while fetch fails.
+      // Peaks for cloud-only recordings therefore need either bucket CORS
+      // configuration or a validated Rust-side download; see the comment
+      // on the peaks effect below.
       if (session.audioCloudPath || session.audioDownloadUrl) {
+        const cached = cloudUrlCache.get(session.id);
+        if (cached) {
+          setAudioSrc(cached);
+          return;
+        }
         setLoadingAudio(true);
         try {
           const cloudUrl = await resolveCloudAudioUrl(session);
           if (cancelled) return;
           if (cloudUrl) {
+            cloudUrlCache.set(session.id, cloudUrl);
             setAudioSrc(cloudUrl);
             return;
           }
@@ -178,38 +229,85 @@ export default function SessionDetail({
   // computes peak-per-bucket, normalizes to 0..1, and returns a tiny
   // JSON array of 64 floats. Zero Web Audio, zero decoding fragility.
   useEffect(() => {
-    // Only local files have a path we can pass to Rust.
-    if (!session.audioStoragePath) {
-      // For cloud-only sessions (no local WAV), we can't compute
-      // peaks server-side. Leave as null (placeholder renders).
-      // A future enhancement could download the cloud file first.
-      setPeaks(null);
-      return;
-    }
-
     let cancelled = false;
+
+    // Peak sources, in order:
+    //   1. Bytes already in memory. Set by the local-path branch above,
+    //      which reads through Rust (`cmd_read_audio_bytes`) and is not
+    //      subject to CORS.
+    //   2. The Rust peaks command, when a local path exists.
+    //   3. Nothing. Cloud-only recordings have no local file, and the
+    //      webview cannot fetch the Firebase URL because the bucket sends
+    //      no `Access-Control-Allow-Origin` header. Playback still works
+    //      because media elements are exempt from CORS. Fixing the
+    //      waveform for these needs either CORS configured on the bucket
+    //      or a Rust-side download with strict host and path validation.
     void (async () => {
+      const buffer = audioBytesRef.current;
+      if (buffer) {
+        const parsed = computeWavPeaks(buffer, BAR_COUNT);
+        if (cancelled) return;
+        if (parsed) {
+          peaksCache.set(session.id, parsed);
+          setPeaks(parsed);
+          setPeaksState("ready");
+          return;
+        }
+      }
+
+      if (session.audioStoragePath) {
+        try {
+          const result = await invoke<number[]>("cmd_get_audio_peaks", {
+            path: session.audioStoragePath,
+            barCount: BAR_COUNT,
+          });
+          if (cancelled) return;
+          if (result && result.length > 0) {
+            peaksCache.set(session.id, result);
+            setPeaks(result);
+            setPeaksState("ready");
+            return;
+          }
+        } catch {
+          // The document records a local path but the file is gone on
+          // this machine (os error 2). Normal for sessions synced from
+          // another device, or after local data was cleared. Fall through
+          // to the cloud copy rather than reporting failure.
+        }
+      }
+
+      // Cloud fallback. Rust downloads the object because Firebase
+      // Storage sends no CORS header, so the webview cannot fetch it.
+      const cloudUrl = cloudUrlCache.get(session.id);
+      if (!cloudUrl) {
+        setPeaksState("unavailable");
+        return;
+      }
       try {
-        const result = await invoke<number[]>("cmd_get_audio_peaks", {
-          path: session.audioStoragePath,
+        const result = await invoke<number[]>("cmd_get_cloud_audio_peaks", {
+          url: cloudUrl,
           barCount: BAR_COUNT,
         });
         if (cancelled) return;
         if (result && result.length > 0) {
+          peaksCache.set(session.id, result);
           setPeaks(result);
+          setPeaksState("ready");
+        } else {
+          setPeaksState("unavailable");
         }
       } catch (e) {
         if (cancelled) return;
         // eslint-disable-next-line no-console
-        console.warn("[popo] cmd_get_audio_peaks failed:", e);
-        setPeaks(null);
+        console.warn("[popo] cloud waveform unavailable:", e);
+        setPeaksState("unavailable");
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [session.audioStoragePath]);
+  }, [session.audioStoragePath, audioSrc, session.id]);
 
   // Auto-play: when the Play button was clicked from the collapsed
   // row, the parent passes autoPlay=true. We wait until audioSrc is
@@ -364,9 +462,9 @@ export default function SessionDetail({
         {!editing && (hasAudio || loadingAudio || audioError) && (
           <WaveformPlayer
             src={audioSrc}
-            loading={loadingAudio}
-            error={audioError}
+                error={audioError}
             peaks={peaks}
+        peaksState={peaksState}
             playing={playing}
             currentTime={currentTime}
             duration={duration}
@@ -432,9 +530,9 @@ export default function SessionDetail({
 
 interface WaveformPlayerProps {
   src: string | null;
-  loading: boolean;
   error: string | null;
   peaks: number[] | null;
+  peaksState: PeaksState;
   playing: boolean;
   currentTime: number;
   duration: number;
@@ -450,9 +548,9 @@ interface WaveformPlayerProps {
 
 function WaveformPlayer({
   src,
-  loading,
   error,
   peaks,
+  peaksState,
   playing,
   currentTime,
   duration,
@@ -468,9 +566,12 @@ function WaveformPlayer({
   if (error) {
     return <PlayerLine>{error}</PlayerLine>;
   }
-  if (loading) {
-    return <PlayerLine>Loading recording…</PlayerLine>;
-  }
+  // Deliberately no "Loading recording" line. Swapping a text row for the
+  // player caused a visible two-stage rebuild on every open. The player
+  // renders immediately instead: the play button disables itself until a
+  // source exists, and the waveform shows its own skeleton. Layout is
+  // identical throughout, so loading reads as one quick settle rather
+  // than three separate screens.
 
   const progressRatio = duration > 0 ? currentTime / duration : 0;
 
@@ -533,7 +634,7 @@ function WaveformPlayer({
       </button>
 
       {/* Waveform */}
-      <Waveform peaks={peaks} progress={progressRatio} onSeek={onSeek} />
+      <Waveform peaks={peaks} peaksState={peaksState} progress={progressRatio} onSeek={onSeek} />
 
       {/* Time */}
       <div
@@ -575,21 +676,27 @@ function PlayerLine({ children }: { children: React.ReactNode }) {
 
 interface WaveformProps {
   peaks: number[] | null;
+  peaksState: PeaksState;
   /** 0..1, current play position */
   progress: number;
   onSeek: (ratio: number) => void;
 }
 
-function Waveform({ peaks, progress, onSeek }: WaveformProps) {
-  // Fixed bars count keeps layout stable while peaks are loading.
-  // Placeholder bars have a flat baseline amplitude so the block
-  // doesn't feel empty before decode resolves.
-  const effective =
-    peaks ??
-    Array.from(
-      { length: BAR_COUNT },
-      (_, i) => 0.14 + 0.06 * Math.sin(i * 0.45),
-    );
+function Waveform({ peaks, peaksState, progress, onSeek }: WaveformProps) {
+  // One SVG for every state. Rather than swapping between a text label, a
+  // skeleton and the real bars (which read as three separate screens), the
+  // bars are always present and simply animate from a flat line up to
+  // their real heights when the data lands.
+  //
+  // This also removes the "waveform unavailable" text entirely. It was
+  // noise: when a recording genuinely has no audio the player does not
+  // render at all, so the only time the label appeared was mid-load or on
+  // a peaks failure, and in both cases a resting flat line says the same
+  // thing without shouting about it.
+  const ready = peaksState === "ready" && !!peaks && peaks.length > 0;
+  const effective = ready
+    ? (peaks as number[])
+    : Array.from({ length: BAR_COUNT }, () => 0);
 
   // SVG coordinate system: 1000 wide × 40 tall.
   const W = 1000;
@@ -643,7 +750,18 @@ function Waveform({ peaks, progress, onSeek }: WaveformProps) {
             rx={barW / 2}
             ry={barW / 2}
             fill={played ? "var(--text-primary)" : "var(--text-ghost)"}
-            style={{ transition: "fill 80ms linear" }}
+            style={{
+              // `y` and `height` are animatable CSS properties on SVG
+              // geometry in Chromium (WebView2), so the flat resting line
+              // grows into the real waveform instead of snapping.
+              //
+              // The small per-bar delay makes it rise left-to-right, which
+              // reads as the audio being scanned rather than everything
+              // popping at once. Capped so the last bar is not late.
+              transition:
+                "y 380ms cubic-bezier(0.16, 1, 0.3, 1), height 380ms cubic-bezier(0.16, 1, 0.3, 1), fill 80ms linear",
+              transitionDelay: ready ? `${Math.min(i * 3, 180)}ms` : "0ms",
+            }}
           />
         );
       })}

@@ -75,7 +75,7 @@ export default function AppShell() {
   useAppIconsSync();
 
   // On sign-in, subscribe to Snippets + Dictionary so the user's
-  // text-expansion shortcuts and Chirp 3 phrase hints follow them
+  // text-expansion shortcuts and speech vocabulary hints follow them
   // across devices.
   useSnippetsSync();
   useDictionarySync();

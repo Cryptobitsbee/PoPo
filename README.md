@@ -13,9 +13,9 @@
 - 🫥 **Lives in the tray** — there's no main window demanding your
   attention. A barely-visible pill at the bottom of the screen is
   the only ambient UI.
-- 🌍 **Real Google Chirp 3 transcription** — supports English, Hindi,
-  Telugu, Tamil, Bengali, Marathi, Spanish, French, German, Japanese
-  and more, with `auto` language detection.
+- 🌍 **Gemini 3.5 Transcribe Live transcription** - 85+ languages
+  including English, Hindi, Spanish, French, German and Japanese, with
+  automatic detection that switches language mid-sentence.
 - 🎛️ **Modes** — reusable AI post-processing prompts (Casual,
   Professional, Email, Code, and any you write).
 - ☁️ **Optional cloud sync** — sign in with Google and your history,
@@ -80,7 +80,7 @@ window:
 
 After dismissal, you land on the **History** page of the main window.
 
-### Connect Google Cloud Speech-to-Text
+### Connect Google Cloud (Vertex AI)
 
 popo needs your own GCP credentials to transcribe. This keeps costs
 transparent (billed to you, not us) and privacy clean (audio goes
@@ -91,19 +91,21 @@ directly from your machine to Google, never through a middleman).
    opens your browser to the right GCP Console page.
 2. **Step 1 · Create project** — spin up a new Google Cloud project
    (or pick an existing one).
-3. **Step 2 · Enable Speech-to-Text v2** — one click on the enable
-   button in the Console.
+3. **Step 2 · Enable the Vertex AI API** — one click on the enable
+   button in the Console. This is `aiplatform.googleapis.com`, and it
+   covers both transcription and AI formatting.
 4. **Step 3 · Create service account** — name it `popo-stt`, grant it
-   the `roles/speech.client` role, and generate a JSON key.
+   the `roles/aiplatform.user` role (Vertex AI User), and generate a
+   JSON key.
 5. **Step 4 · Point popo at your key** — use the **Browse…** button to
    select the JSON file you downloaded. popo stores only that file's
    path in `%APPDATA%\ai.popo.desktop\gcp.json`; it does not copy the
-   key. Keep the original JSON in place for Speech-to-Text and Vertex
-   AI to remain available. Enter your project ID.
+   key. Keep the original JSON in place for Vertex AI to remain
+   available. Enter your project ID.
 6. **Step 5 · Test** — popo validates the path + project ID format
    and confirms reachability.
 
-The wizard closes and real Chirp 3 dictation is live.
+The wizard closes and real dictation is live.
 
 > **If you skip GCP setup and press the hotkey anyway:** popo pastes
 > a branded reminder (`[popo] Add your Google Cloud credentials in
@@ -149,7 +151,7 @@ cancels the capture.
 | `sleep`      | Near-invisible bar at screen bottom. Click-through.  | Idle, or 4s after last session            |
 | `ready`      | Expanded pill, bars flat, clearly listening          | Hotkey press, mic stream opened           |
 | `active`     | Bars pump with your voice                            | PCM amplitude above silence threshold     |
-| `processing` | Dot-matrix loader                                    | Hotkey released, awaiting Chirp response  |
+| `processing` | Dot-matrix loader                                    | Hotkey released, awaiting transcription  |
 | `success`    | Check icon, 300 ms hold                              | Paste succeeded                           |
 | `error`      | Warning icon, red border, 2 s hold + 10 s tooltip    | Any step in the pipeline failed           |
 
@@ -211,16 +213,27 @@ always know exactly what each switch will do in your current state.
 ### "My transcript is nonsense / wrong language"
 
 - Settings → Transcription → Language. Change from `auto` to the
-  specific language you're speaking. Chirp's auto-detection is very
-  good but not perfect.
-- If logs say `locale auto ... is no longer generally available`, you
-  are running a build that still targets Google's preview Mumbai Speech
-  endpoint. Current popo uses the documented GA `eu` multi-region, where
-  Chirp 3 language-agnostic transcription remains available.
+  specific language you're speaking. Automatic detection is very good but not perfect.
+- Languages are labelled **Supported** or **Experimental**, matching
+  Google's own readiness rating for the model. Experimental locales
+  work but are less accurate, so try a Supported one if results are
+  poor. Tamil is not currently supported by this model.
 - Check that your mic is correct in Settings → Recording →
   Microphone. The test page is a good way to verify.
 - Silence can look like a cough — the silence-threshold is tuned
   around voice. Very quiet speech may not trigger the active state.
+
+### "Dictation fails with a permissions error"
+
+Transcription runs on Vertex AI, so the service account needs more than
+the old Speech-to-Text role. In your GCP project:
+
+- Enable the **Vertex AI API** (`aiplatform.googleapis.com`).
+- Grant the service account **`roles/aiplatform.user`**.
+
+If you set popo up before it moved to Gemini 3.5 Transcribe Live, your
+key likely has only `roles/speech.client` and needs this added. Re-run
+**Settings → GCP Setup → Run setup wizard** to walk through it.
 
 ### "Vertex AI returns HTTP 404"
 
@@ -276,7 +289,7 @@ and [source-build configuration guide](docs/OPEN_SOURCE_CONFIGURATION.md).
 - Your GCP service-account JSON at the path you selected. PoPo stores only
   its path, project ID, and language in
   `%APPDATA%\ai.popo.desktop\gcp.json`; moving/deleting the original
-  disables Speech-to-Text and Vertex AI.
+  disables transcription and AI formatting.
 - An AI Studio key, when configured, encrypted for the current Windows
   user in `gemini-api-key.dpapi` through DPAPI.
 - Bounded operational logs under `%APPDATA%\popo\`. They are designed not
@@ -289,7 +302,8 @@ for the running app rather than a local SQLite history database.
 ### Goes to your Google services
 
 - During dictation/test, audio and recognition context go directly to
-  Speech-to-Text in your configured Google Cloud project.
+  Gemini 3.5 Transcribe Live on Vertex AI in your configured Google
+  Cloud project.
 - If AI formatting is enabled, the transcript and selected prompt go to
   AI Studio or Vertex AI.
 - If you sign in, Firebase can store your profile, session transcripts,
@@ -408,7 +422,7 @@ popo/
 │       │   ├── lib.rs         # Tauri setup, tray, hotkey, first-run detection
 │       │   ├── hotkey/        # Global shortcut + state machine
 │       │   ├── audio/         # cpal capture, resample, WAV storage
-│       │   ├── gcp/           # Chirp 3 gRPC + auth + fake_transcribe stub
+│       │   ├── gcp/           # Vertex AI Live API + auth + cost estimation
 │       │   ├── focus/         # Win32 HWND + clipboard + paste orchestrator
 │       │   └── commands/      # Tauri invoke handlers (settings, gcp, system, …)
 │       └── assets/installer/  # NSIS hooks.nsh + English.nsh + BMPs

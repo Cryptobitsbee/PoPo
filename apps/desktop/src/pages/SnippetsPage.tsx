@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Plus, Pencil, Trash, Warning } from "@phosphor-icons/react";
 import type { Snippet } from "@popo/shared-types";
 import { useSnippetsStore } from "../store/snippetsStore";
+import PageShell from "../components/layout/PageShell";
 import Button from "../components/shared/Button";
 import Modal from "../components/shared/Modal";
 import Input from "../components/shared/Input";
@@ -52,13 +53,10 @@ export default function SnippetsPage() {
   );
 
   return (
-    <div
-      style={{
-        padding: "var(--sp-8) var(--sp-10)",
-        maxWidth: 1040,
-        margin: "0 auto",
-      }}
-    >
+    <PageShell
+      maxWidth={1040}
+      header={
+        <>
       <div
         style={{
           display: "flex",
@@ -103,6 +101,9 @@ export default function SnippetsPage() {
         Dictate a short trigger word, get the full text pasted. Matching is
         whole-word and case-insensitive — "addr" expands but "address" doesn't.
       </p>
+        </>
+      }
+    >
 
       {sorted.length === 0 ? (
         <EmptyState onNew={openNew} />
@@ -133,7 +134,7 @@ export default function SnippetsPage() {
           setEditorOpen(false);
         }}
       />
-    </div>
+    </PageShell>
   );
 }
 

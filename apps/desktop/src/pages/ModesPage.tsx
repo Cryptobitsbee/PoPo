@@ -3,6 +3,7 @@ import { Plus } from "@phosphor-icons/react";
 import type { Mode } from "@popo/shared-types";
 import { useModesStore } from "../store/modesStore";
 import Button from "../components/shared/Button";
+import PageShell from "../components/layout/PageShell";
 import ModeGrid from "../components/modes/ModeGrid";
 import ModeEditor from "../components/modes/ModeEditor";
 import ConfirmDialog from "../components/shared/ConfirmDialog";
@@ -64,13 +65,9 @@ export default function ModesPage() {
   };
 
   return (
-    <div
-      style={{
-        padding: "var(--sp-8) var(--sp-10)",
-        maxWidth: 1040,
-        margin: "0 auto",
-      }}
-    >
+    <PageShell
+      header={
+        <>
       {/* Title + New Mode button row */}
       <div
         style={{
@@ -114,11 +111,13 @@ export default function ModesPage() {
           maxWidth: 520,
         }}
       >
-        Modes are named presets for the AI polish step. Auto-format must be
-        enabled in Settings before any mode, app binding, or mode hotkey can
-        change a transcript.
+        Presets that decide how a transcript is formatted. Auto is the fastest,
+        with no extra AI step. Auto-format must be on in Settings for any mode
+        to apply.
       </p>
-
+        </>
+      }
+    >
       {/* Grid */}
       <ModeGrid
         modes={modes}
@@ -156,8 +155,6 @@ export default function ModesPage() {
         confirmLabel="Delete mode"
       />
 
-      {/* Bottom breathing room */}
-      <div style={{ height: "var(--sp-12)" }} />
-    </div>
+    </PageShell>
   );
 }

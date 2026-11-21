@@ -21,7 +21,7 @@ import { useSettingsStore } from "../../store/settingsStore";
  *
  * 5 steps, all inside the shared Modal primitive:
  *   0. Intro      — what popo does with GCP, cost estimate
- *   1. Project    — create GCP project, enable Speech-to-Text v2 API
+ *   1. Project    — create GCP project, enable the Vertex AI API
  *   2. Service account — create SA, grant role, download JSON key
  *   3. Point to key — native file picker + project ID input
  *   4. Test       — verify the inputs (simulated in Phase 4; real gRPC
@@ -73,7 +73,7 @@ export default function GCPSetupWizard({ open, onClose }: GCPSetupWizardProps) {
   const handleNext = async () => {
     if (step === 3 && !canProceedFromStep3) return;
     if (step === TOTAL_STEPS - 1) {
-      // Finish: push to Rust (real Chirp auth cache), then commit to
+      // Finish: push to Rust (auth cache), then commit to
       // frontend store, then close.
       try {
         await invoke("cmd_set_gcp_config", {
@@ -286,7 +286,7 @@ function IntroStep() {
   return (
     <StepBody
       title="Why connect GCP?"
-      description="popo transcribes through Google Cloud Speech-to-Text (Chirp). You pay Google directly — popo itself is free. Takes about three minutes."
+      description="popo transcribes through Gemini 3.5 Transcribe Live on Vertex AI. You pay Google directly — popo itself is free. Takes about three minutes."
     >
       <div
         style={{
@@ -298,7 +298,7 @@ function IntroStep() {
       >
         <Fact
           label="Cost"
-          value="$0.016 / minute after the first 60 minutes per month (free)."
+          value="About $0.009 per minute of dictation, billed by Google to your own project."
         />
         <Fact
           label="What you need"
@@ -319,7 +319,7 @@ function ProjectStep() {
   return (
     <StepBody
       title="Create a project and enable the API"
-      description="Pick or create a project in the GCP console, then turn on Speech-to-Text v2."
+      description="Pick or create a project in the GCP console, then turn on the Vertex AI API."
     >
       <ol style={olStyle}>
         <Instruction>
@@ -329,14 +329,14 @@ function ProjectStep() {
           </OpenLink>
         </Instruction>
         <Instruction>
-          Enable <strong>Speech-to-Text v2 API</strong> on your project:
-          <OpenLink url="https://console.cloud.google.com/apis/library/speech.googleapis.com">
+          Enable the <strong>Vertex AI API</strong> on your project:
+          <OpenLink url="https://console.cloud.google.com/apis/library/aiplatform.googleapis.com">
             Enable API
           </OpenLink>
         </Instruction>
         <Instruction>
-          Make sure <strong>billing</strong> is enabled — Speech-to-Text won't
-          run without it (the 60-min monthly free tier still applies).
+          Make sure <strong>billing</strong> is enabled. Transcription will not
+          run without it.
         </Instruction>
       </ol>
     </StepBody>
@@ -363,7 +363,7 @@ function ServiceAccountStep() {
           <kbd style={kbdStyle}>popo-dictation</kbd>).
         </Instruction>
         <Instruction>
-          Grant it the <strong>Cloud Speech Client</strong> role:
+          Grant it the <strong>Vertex AI User</strong> role:
           <span
             style={{
               display: "inline-flex",
@@ -377,7 +377,7 @@ function ServiceAccountStep() {
               color: "var(--text-primary)",
             }}
           >
-            roles/speech.client
+            roles/aiplatform.user
           </span>
         </Instruction>
         <Instruction>
@@ -532,7 +532,7 @@ function TestStep({
               lineHeight: 1.3,
             }}
           >
-            {testState === "testing" && "Contacting Speech-to-Text v2…"}
+            {testState === "testing" && "Contacting Vertex AI…"}
             {testState === "ok" && "Ready to dictate"}
             {testState === "failed" && "Check your inputs"}
             {testState === "idle" && "Preparing…"}

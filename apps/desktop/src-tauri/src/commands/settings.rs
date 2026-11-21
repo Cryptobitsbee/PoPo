@@ -319,109 +319,10 @@ pub async fn cmd_set_start_at_login(app: AppHandle, enabled: bool) -> Result<(),
     }
 }
 
-// ── Phase C: Chirp 3 feature-flag commands ─────────────────────
-
-/// Toggle Chirp 3's spoken-punctuation feature ("say 'comma' → ,").
-#[tauri::command]
-pub fn cmd_set_spoken_punctuation(
-    state: State<'_, PopoState>,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut slot = state
-        .inner()
-        .spoken_punctuation
-        .lock()
-        .map_err(|_| "PopoState spoken_punctuation mutex poisoned".to_string())?;
-    *slot = enabled;
-    tracing::info!("cmd_set_spoken_punctuation: {enabled}");
-    Ok(())
-}
-
-/// Toggle Chirp 3's spoken-emoji feature ("say 'smiling emoji' → 😊").
-#[tauri::command]
-pub fn cmd_set_spoken_emojis(state: State<'_, PopoState>, enabled: bool) -> Result<(), String> {
-    let mut slot = state
-        .inner()
-        .spoken_emojis
-        .lock()
-        .map_err(|_| "PopoState spoken_emojis mutex poisoned".to_string())?;
-    *slot = enabled;
-    tracing::info!("cmd_set_spoken_emojis: {enabled}");
-    Ok(())
-}
-
-/// Toggle Chirp 3's profanity filter (masks profane words with asterisks).
-#[tauri::command]
-pub fn cmd_set_profanity_filter(state: State<'_, PopoState>, enabled: bool) -> Result<(), String> {
-    let mut slot = state
-        .inner()
-        .profanity_filter
-        .lock()
-        .map_err(|_| "PopoState profanity_filter mutex poisoned".to_string())?;
-    *slot = enabled;
-    tracing::info!("cmd_set_profanity_filter: {enabled}");
-    Ok(())
-}
-
-/// Set the Chirp 3 endpointing sensitivity. Accepts "low" / "standard"
-/// / "high" as strings; unknown values default to "standard".
-///
-/// **Limitation:** the `googleapis-tonic-google-cloud-speech-v2` crate
-/// version in use (v0.34) only supports the `Standard` variant on
-/// the enum. Non-standard values are stored in PopoState for forward
-/// compatibility but `resolve_endpointing_sensitivity` currently
-/// returns Standard unconditionally. When the proto crate ships LOW /
-/// HIGH, the resolver can be re-enabled without frontend changes.
-#[tauri::command]
-pub fn cmd_set_endpointing_sensitivity(
-    state: State<'_, PopoState>,
-    sensitivity: String,
-) -> Result<(), String> {
-    let normalized = match sensitivity.to_lowercase().trim() {
-        "low" => "low",
-        "high" => "high",
-        _ => "standard",
-    }
-    .to_string();
-    let mut slot = state
-        .inner()
-        .endpointing_sensitivity
-        .lock()
-        .map_err(|_| "PopoState endpointing mutex poisoned".to_string())?;
-    tracing::info!("cmd_set_endpointing_sensitivity: {normalized}");
-    *slot = normalized;
-    Ok(())
-}
-
-/// Set the multi-language code list for Chirp 3 code-switching.
-/// Empty list → fall back to `GcpConfig.language_code` in the hotkey
-/// press path. Non-empty → Chirp detects + switches between them.
-#[tauri::command]
-pub fn cmd_set_multi_language_codes(
-    state: State<'_, PopoState>,
-    codes: Vec<String>,
-) -> Result<(), String> {
-    // Normalize: drop empty strings + trim each code.
-    let cleaned: Vec<String> = codes
-        .into_iter()
-        .map(|c| c.trim().to_string())
-        .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("auto"))
-        .collect();
-
-    let mut slot = state
-        .inner()
-        .multi_language_codes
-        .lock()
-        .map_err(|_| "PopoState multi_language_codes mutex poisoned".to_string())?;
-    tracing::info!("cmd_set_multi_language_codes: {cleaned:?}");
-    *slot = cleaned;
-    Ok(())
-}
-
 // ── Phase D: Gemini auto-format commands ───────────────────────
 
 /// Toggle Gemini Flash post-processing (Settings → Auto-format with AI).
-/// When enabled, every successful Chirp transcript is passed through
+/// When enabled, every successful transcript is passed through
 /// `gcp::gemini::polish` with the current `auto_format_prompt`.
 #[tauri::command]
 pub fn cmd_set_auto_format(state: State<'_, PopoState>, enabled: bool) -> Result<(), String> {
@@ -482,7 +383,7 @@ pub fn cmd_set_snippets(
 /// Replace the active dictionary phrase list. Called by the frontend
 /// via `useApplySettingsToRust` whenever dictionaryStore changes.
 ///
-/// Chirp 3 allows up to 1000 phrases per request. We don't enforce
+/// Google allows up to 1000 vocabulary terms per session. We don't enforce
 /// that here — if a future user has that many, Google's error
 /// message will be clearer than any guard we could write.
 #[tauri::command]
@@ -648,13 +549,13 @@ pub fn cmd_set_mode_bindings(
 // ── Gemini commands (Session 34, simplified Session 35) ─────────
 // Session 35 removed `cmd_set_smart_cleanup`. Gemini polish gates on
 // `auto_format_enabled` directly:
-//   autoFormat = true  + key set  → Gemini polish + Chirp prompt
-//   autoFormat = true  + no key   → Chirp prompt only (legacy)
-//   autoFormat = false             → raw Chirp
+//   autoFormat = true  + key set  → Gemini polish
+//   autoFormat = true  + no key   → SMART transcription only
+//   autoFormat = false             → the raw transcript
 
 /// Set the Gemini API key used by smart-cleanup. `None` / empty
 /// string clears it (and smart-cleanup then silently no-ops on the
-/// next dictation, falling through to Chirp raw).
+/// next dictation, falling through to the raw transcript).
 #[tauri::command]
 pub fn cmd_set_gemini_api_key(
     app: AppHandle,
@@ -694,7 +595,7 @@ pub fn cmd_set_gemini_api_key(
 /// polish unexpectedly.
 ///
 /// Vertex needs no key here — it reuses the GCP service account from
-/// `cmd_set_gcp_config` (same one Chirp uses). `location` is ignored
+/// `cmd_set_gcp_config` (the same credential transcription uses). `location` is ignored
 /// for the AI Studio provider but always stored so switching back to
 /// Vertex restores the user's last region.
 #[tauri::command]

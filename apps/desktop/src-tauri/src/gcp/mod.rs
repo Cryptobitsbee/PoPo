@@ -1,16 +1,15 @@
-// gcp — Speech-to-Text v2 gRPC client (Chirp 2).
+// gcp - Vertex AI Live API speech-to-text + Gemini post-processing.
 //
-// Phase 2 [6] polish: real gRPC streaming via `chirp::transcribe`.
+// Speech-to-text lives in `transcribe_live`; cost math in `cost`.
 // `fake_transcribe` stays available as an explicit fallback when the user
 // hasn't configured their GCP credentials yet — NO silent fallback on
 // real-call errors (those should surface to the pill error state so the
 // user knows something's wrong).
 
 pub mod auth;
-pub mod chirp;
-pub mod client;
+pub mod cost;
 pub mod gemini;
-pub mod streaming;
+pub mod transcribe_live;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -27,7 +26,7 @@ use crate::gcp::auth::Authenticator;
 pub struct GcpConfig {
     pub service_account_path: String,
     pub project_id: String,
-    /// Language code passed to Chirp ("auto", "en-US", "hi-IN", etc.).
+    /// Language code for transcription ("auto", "en-US", "hi-IN", etc.).
     /// Empty string means fall back to "en-US" at call time.
     pub language_code: String,
 }
@@ -44,23 +43,23 @@ pub async fn authenticator_from_config(config: &GcpConfig) -> Result<Authenticat
     Authenticator::from_service_account_file(&config.service_account_path).await
 }
 
-/// The real transcribe path. Drains the audio ring buffer into a Vec<f32>
-/// and calls chirp::transcribe.
+/// Transcribe a finished buffer of audio.
 ///
-/// `language_codes` follows the Phase C contract: empty → auto-detect,
-/// single → one language, multiple → code-switching.
-/// `features` carries the Chirp 3 toggles (spoken punctuation / emojis /
-/// profanity filter). Always-on cloud denoiser is added inside
-/// `chirp::transcribe`; callers don't need to pass it.
+/// Used by the Test page, which has all its audio in hand rather than
+/// streaming it. Runs over the same Gemini 3.5 Transcribe Live socket as
+/// real dictation so the Test page can never disagree with the hotkey
+/// path about what the engine does.
+///
+/// `language_codes` empty means automatic language identification.
+/// `custom_vocabulary` biases recognition and, unlike the old PhraseSet
+/// adaptation, works alongside auto-detection.
 pub async fn transcribe(
     auth: &Authenticator,
     config: &GcpConfig,
     samples: &Arc<Mutex<VecDeque<f32>>>,
     input_sample_rate: u32,
     language_codes: &[String],
-    features: googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::RecognitionFeatures,
-    custom_prompt: &str,
-    adaptation_phrases: &[String],
+    custom_vocabulary: &[String],
 ) -> Result<String> {
     let drained: Vec<f32> = {
         let guard = samples
@@ -69,17 +68,44 @@ pub async fn transcribe(
         guard.iter().copied().collect()
     };
 
-    chirp::transcribe(
-        auth,
-        &config.project_id,
-        drained,
-        input_sample_rate,
-        language_codes,
-        features,
-        custom_prompt,
-        adaptation_phrases,
-    )
-    .await
+    let resampled = if input_sample_rate as usize == crate::audio::pcm::TARGET_SR {
+        drained
+    } else {
+        crate::audio::pcm::resample_to_16k(&drained, input_sample_rate as usize)
+    };
+    let pcm = crate::audio::pcm::f32_to_pcm16_bytes(&resampled);
+
+    let mut vocab = custom_vocabulary.to_vec();
+    vocab.truncate(transcribe_live::MAX_CUSTOM_VOCABULARY);
+
+    // The Test page shows what the engine heard, so VERBATIM: no
+    // cleanup, no mode prompt. It is a microphone check, not a
+    // formatting demo.
+    let session_config = transcribe_live::SessionConfig {
+        mode: transcribe_live::TranscribeMode::Verbatim,
+        language_codes: language_codes.to_vec(),
+        custom_vocabulary: vocab,
+    };
+
+    let token = auth.access_token().await?;
+    let mut session =
+        transcribe_live::LiveSession::open(&token, &config.project_id, session_config).await?;
+
+    session.begin_utterance().await?;
+    // Same chunking as the live forwarder so one oversized frame can't
+    // stall the socket on a long test recording.
+    for chunk in pcm.chunks(25_600) {
+        session.send_audio(chunk.to_vec()).await?;
+    }
+    let transcript = session.end_utterance().await?;
+    session.close().await;
+
+    if transcript.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "No transcript returned (silence, or the wrong microphone?)"
+        ));
+    }
+    Ok(transcript)
 }
 
 /// Fake transcription stub — used when the user hasn't configured GCP

@@ -101,7 +101,7 @@ export default function Select<V extends string = string>({
           padding: "0 12px",
           background: "var(--bg-elevated)",
           border: `1px solid ${
-            open ? "var(--border-default)" : "var(--border-subtle)"
+            open ? "var(--border-control)" : "var(--border-subtle)"
           }`,
           borderRadius: "var(--radius-button)",
           fontFamily: "var(--font-pixel-square)",

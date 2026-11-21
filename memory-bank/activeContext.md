@@ -4,6 +4,138 @@
 
 ## Current phase
 
+**SESSION 65 — Replaced Google Chirp 3 with Gemini 3.5 Transcribe Live on the Vertex AI Live API.**
+
+Speech-to-text now runs on `gemini-3.5-transcribe-live-preview` over a
+`BidiGenerateContent` WebSocket. Chirp 3 / Speech-to-Text v2 and the whole
+tonic gRPC stack are deleted. Gemini 3.5 Flash-Lite is RETAINED for
+mode-prompt polish. Full spec and engine reference:
+`docs/GEMINI_TRANSCRIBE_LIVE.md`.
+
+Verified: `cargo test --lib` 69 passed / 0 failed; `cargo check` zero
+errors and zero warnings; `cargo fmt` clean; `pnpm typecheck` pass;
+`pnpm build` pass (5072 modules). A real dictation against live Vertex
+credentials is NOT yet done and is the only thing that proves the model
+ID and `global` location actually serve.
+
+### The three-tier routing rule (spec §3)
+
+Auto-format remains the strict master switch and now also selects the
+transcription tier. No new `Mode` field and no ID special-casing:
+
+| `auto_format_enabled` | resolved prompt | wire `mode` | Flash-Lite |
+| --- | --- | --- | --- |
+| off | (returns empty early) | `VERBATIM` | no |
+| on | empty | `SMART` | no |
+| on | non-empty | `VERBATIM` | yes |
+
+`mode-auto`'s `systemPrompt` is now `""`, so it reaches tier 2
+structurally. That also gives correct behaviour if a user deletes the Auto
+mode or creates a custom mode with a blank prompt: both land on SMART.
+
+### Findings that changed the design
+
+- **Vertex model IDs differ from AI Studio.** Vertex needs the
+  `-preview` suffix. Same class of bug as Session 59's `us-central1` 404.
+- **Location is `global` only**, "single-region and multi-region coming
+  soon". No region setting exists. Do NOT reuse
+  `gemini::normalize_vertex_location`, which governs Flash-Lite's real
+  global/us/eu choice.
+- **`setupComplete` is a hard gate.** Sending audio before it arrives
+  yields empty transcripts "particularly on short audio clips" — exactly
+  popo's workload. This INVERTS Session 27's design, which deliberately
+  avoided awaiting stream open because Chirp blocked ~12s on response
+  headers.
+- **Setup parameters are immutable once processed**, and `mode`,
+  `languageCodes` and `customVocabulary` all live in `setup`. One socket
+  cannot switch tier mid-life, hence `SessionConfig::fingerprint()`.
+- **Session resumption stays OFF.** It caches audio and text server-side;
+  incompatible with popo's privacy posture. Reconnect on `goAway`.
+- **`chirp.rs` was not only gRPC.** It also held `TARGET_SR`,
+  `resample_to_16k` and `f32_to_pcm16_bytes`, used by `hotkey/mod.rs` and
+  `client.rs`. Deleting it naively would have destroyed the audio
+  conversion path feeding the NEW engine. Rescued into `audio/pcm.rs`
+  with 7 tests. Do not reintroduce rubato (Session 15 panic).
+- **The client needed a writer task, not `&mut self`.** The chunk
+  forwarder runs in its own tokio task while `on_release` holds the
+  session, so `send_audio(&mut self)` could not compile. `LiveSession`
+  now owns a writer task draining an `mpsc<Outbound>`, and
+  `audio_sender()` hands the forwarder a cloneable `AudioSender` that
+  deliberately cannot start or end a turn.
+- **The batch-fallback branches collapse.** `on_release` had FIVE
+  `gcp::transcribe` call sites because Chirp had two transports. The Live
+  API has one, so failures now fail CLOSED with an error naming the
+  Vertex AI API and `roles/aiplatform.user`. Net deletion ~11k chars.
+
+### Cost accounting rewritten, and two real bugs fixed
+
+New `gcp/cost.rs` (12 tests). Token-based: 25 audio tokens/sec at
+$3.50/1M in, text out at $21/1M, plus the tier-3 Flash-Lite call which
+the old code never counted at all. Blended ~$0.009/min against Chirp's
+$0.016/min. STT is billed on the RAW transcript, not Flash-Lite's shorter
+rewrite. A 30-second billing increment is mentioned on a Google pricing
+page but could not be attributed to the Live API, so it is deliberately
+NOT encoded.
+
+`stats-compute.ts::computeMetrics` had two pre-existing bugs: it ignored
+the stored per-session `gcpCostEstimate` and it applied Chirp's 15-second
+rounding ONCE over the aggregate. For 100 four-second dictations that
+reported $0.108 against a true $0.40, while its own comment claimed it
+over-estimated. It now sums the stored value, which also makes history
+correct across the migration for free — and therefore needed NO Session
+schema change, NO `firestore.rules` edit (its `validSession` allowlist is
+closed; adding a field would have rejected every write), and no rules
+redeploy.
+
+### Language list
+
+29 Supported + 57 Experimental, from the Vertex readiness table.
+GA/Preview labels became Supported/Experimental. **Tamil (`ta-IN`) is
+absent from this model entirely** and was removed; Telugu, Bengali (India)
+and Marathi drop from Chirp GA to Experimental. `Settings.multiLanguageCodes`
+was deleted because `languageCodes: []` does native mid-utterance
+code-switching. `Settings.endpointing` deleted (no analogue), plus the
+long-dead `spokenPunctuation` / `spokenEmojis` / `profanityFilter`.
+
+### UI restructured
+
+- `ModeCard`: a prompt-less mode rendered blank and collapsed shorter
+  than its siblings. It now describes what SMART does, carries a
+  `smart transcription` chip, and the preview has a 3-line `minHeight` so
+  cards share a baseline.
+- `ModeEditor`: for a saved prompt-less mode the textarea is replaced by
+  a read-only explanation and `translateTo` / `outputFormat` are hidden.
+  Keyed on the SAVED prompt, not live state, so typing into a new mode
+  doesn't flip the layout mid-keystroke.
+- `GCPSetupWizard`: Vertex AI API instead of Speech-to-Text v2,
+  `roles/aiplatform.user` instead of `roles/speech.client`.
+- `DictionaryPage`: the auto-detect warning banner is DELETED. That Chirp
+  PhraseSet limitation is gone; custom vocabulary works with auto-detect.
+
+### UPGRADE REQUIREMENT for existing installs
+
+The service account needs the **Vertex AI API enabled** and
+**`roles/aiplatform.user`**. Anyone on the AI Studio Gemini provider has
+never needed Vertex permissions and likely holds only
+`roles/speech.client`, so their dictation will fail until they add it.
+`LiveSession::open()` returns an error naming both specifically.
+
+### Next
+
+1. Real dictation smoke test against live Vertex credentials (tiers 1/2/3,
+   auto-detect code-switching, a Dictionary term under auto-detect, warm
+   socket reuse, an 11-minute idle to force `goAway`, and cost reconciled
+   against the actual bill).
+2. Remaining doc sweep: `AUDIO_PIPELINE_V2.md`, `REALTIME_ANALYSIS.md`,
+   `COMPETITIVE_ANALYSIS.md`, `LANDING_PAGE_RESEARCH.md`, `POPO_BRIEF.md`,
+   `MICROSOFT_STORE_SUBMISSION_GUIDE.md`, `SECURITY_AUDIT_REPORT.md`,
+   `.clinerules`. Historical session logs legitimately mention Chirp and
+   should NOT be rewritten.
+3. `RELEASE_SECURITY_CHECKLIST.md`: record that the core dictation path
+   now runs on a Preview model whose SMART sub-feature is Experimental.
+
+### Previous session context
+
 **SESSION 64 — Installed OAuth diagnosis, PoPo installer polish, and MSIX packaging.**
 
 Completed:

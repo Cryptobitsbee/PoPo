@@ -1,6 +1,6 @@
 // gcp/gemini.rs — Gemini 3.5 Flash-Lite transcript polish.
 //
-// Chirp's `custom_prompt` provides light transcription/style biasing;
+// Transcribe Live SMART mode does light cleanup inline;
 // Gemini performs the conservative semantic cleanup requested by the
 // active mode. Both AI Studio and Vertex AI use the same stable model
 // code and generateContent request shape. Provider selection changes
@@ -15,7 +15,7 @@
 //   - The old 2.5-only `thinkingBudget` field is also omitted.
 //
 // Calls remain fail-open: any timeout, provider error, or blocked/empty
-// candidate returns Err and the caller pastes the raw Chirp transcript.
+// candidate returns Err and the caller pastes the the raw transcript transcript.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -50,8 +50,8 @@ const AISTUDIO_ENDPOINT: &str =
 /// googleapis.com`. The original popo path.
 ///
 /// **Vertex AI** — Google Cloud's enterprise Gemini surface. Reuses
-/// the SAME service-account OAuth token popo already mints for Chirp
-/// (scope `cloud-platform` covers both Speech-to-Text and
+/// the SAME service-account OAuth token popo already mints for transcription
+/// (scope `cloud-platform` covers both transcription and
 /// aiplatform). No separate key to manage — the user just enables the
 /// Vertex AI API + grants `roles/aiplatform.user` on the service
 /// account they already configured in GCP Setup. AI Studio API keys
@@ -68,7 +68,7 @@ pub enum GeminiBackend<'a> {
         /// OAuth2 access token (Bearer) minted from the GCP service
         /// account via `gcp::auth::Authenticator::access_token`.
         access_token: &'a str,
-        /// GCP project id (same one used for Chirp).
+        /// GCP project id (same one used for transcription).
         project_id: &'a str,
         /// Vertex routing scope: "global" (recommended), "us", or
         /// "eu". Unsupported legacy single regions are normalized to
@@ -148,13 +148,13 @@ impl GeminiBackend<'_> {
 
 /// Maximum wall-clock time for a Gemini round trip. The 12-second
 /// ceiling retains headroom for TLS/model cold starts while preserving
-/// the fail-open guarantee: on timeout, raw Chirp output is pasted.
+/// the fail-open guarantee: on timeout, the raw transcript output is pasted.
 const GEMINI_TIMEOUT: Duration = Duration::from_millis(12_000);
 
-/// Polish a Chirp transcript through Gemini 3.5 Flash-Lite on the
+/// Polish a transcript through Gemini 3.5 Flash-Lite on the
 /// explicitly selected provider.
 ///
-/// The caller supplies a non-empty mode/system prompt and raw Chirp
+/// The caller supplies a non-empty mode/system prompt and the raw transcript
 /// transcript. Any timeout, network/API failure, blocked candidate, or
 /// empty response returns Err so the caller can paste the raw transcript.
 pub async fn polish(
@@ -340,7 +340,7 @@ pub async fn prewarm(backend: GeminiBackend<'_>) {
 /// button. Sends a tiny `generateContent` request and reports whether
 /// it succeeded, with a user-facing message on failure.
 ///
-/// This is the Gemini analog of `cmd_gcp_test_connection` for Chirp:
+/// This is the Gemini analog of `cmd_gcp_test_connection`:
 /// it proves the chosen provider + credentials actually reach a live
 /// model before the user relies on it in the dictation path.
 ///

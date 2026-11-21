@@ -91,7 +91,7 @@ Pages, in sidebar order:
 
 - Signed-out use is first-class; Firebase sign-in is optional and source builds
   without complete Firebase config must fail closed to local-only behavior.
-- Privacy copy must distinguish active Speech-to-Text audio transfer from
+- Privacy copy must distinguish active speech-to-text audio transfer from
   optional raw-WAV retention/upload. Never imply all dictation is local.
 - Account deletion is retryable/idempotent and must delete known Firestore
   subcollections, profile, Storage audio, Firebase Auth, local WAVs/browser

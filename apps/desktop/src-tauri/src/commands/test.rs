@@ -1,7 +1,7 @@
 // commands/test.rs — Phase E: Test page real dictation pipeline.
 //
 // Provides two commands that wire the Test page's "Hold to Dictate"
-// button to the same cpal + GCP Chirp pipeline used by the global
+// button to the same cpal + transcription pipeline used by the global
 // hotkey — but WITHOUT the paste step. The transcript is returned to
 // the Test page for display only.
 //
@@ -174,7 +174,7 @@ pub async fn cmd_test_dictate_stop(
         TestWaveformPayload { bars: [0.0; 16] },
     );
 
-    // Transcribe with GCP Chirp (or fake_transcribe fallback).
+    // Transcribe via the Live API (or fake_transcribe fallback).
     let gcp_snapshot: Option<(GcpConfig, Authenticator)> = {
         let guard = popo
             .inner()
@@ -188,62 +188,22 @@ pub async fn cmd_test_dictate_stop(
 
     let transcript_result = match gcp_snapshot {
         Some((ref config, ref auth)) => {
-            // Resolve Phase C language codes + features from current state.
-            // Same logic as hotkey::resolve_language_codes; duplicated here
-            // because that helper is private to the hotkey module and the
-            // test command path is read-only (no lock ordering concerns).
+            // Resolve the language list from current state. Empty means
+            // automatic language identification.
             let language_codes: Vec<String> = {
-                let multi = popo
-                    .inner()
-                    .multi_language_codes
-                    .lock()
-                    .map(|g| g.clone())
-                    .unwrap_or_default();
-                if !multi.is_empty() {
-                    multi
+                let single = config.language_code.trim();
+                if single.is_empty() || single.eq_ignore_ascii_case("auto") {
+                    Vec::new()
                 } else {
-                    let single = config.language_code.trim();
-                    if single.is_empty() || single.eq_ignore_ascii_case("auto") {
-                        Vec::new()
-                    } else {
-                        vec![single.to_string()]
-                    }
+                    vec![single.to_string()]
                 }
             };
-            let features = {
-                use googleapis_tonic_google_cloud_speech_v2::google::cloud::speech::v2::RecognitionFeatures;
-                RecognitionFeatures {
-                    enable_automatic_punctuation: true,
-                    enable_spoken_punctuation: popo
-                        .inner()
-                        .spoken_punctuation
-                        .lock()
-                        .map(|g| *g)
-                        .unwrap_or(false),
-                    enable_spoken_emojis: popo
-                        .inner()
-                        .spoken_emojis
-                        .lock()
-                        .map(|g| *g)
-                        .unwrap_or(false),
-                    profanity_filter: popo
-                        .inner()
-                        .profanity_filter
-                        .lock()
-                        .map(|g| *g)
-                        .unwrap_or(false),
-                    ..Default::default()
-                }
-            };
-
             gcp::transcribe(
                 auth,
                 config,
                 &raw_samples,
                 sample_rate,
                 &language_codes,
-                features,
-                "",
                 &popo
                     .inner()
                     .dictionary

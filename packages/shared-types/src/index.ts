@@ -69,65 +69,26 @@ export interface Settings {
   silenceDetectionSeconds: number;
 
   // Transcription
-  /** BCP-47 code or "auto" for Chirp auto-detect. */
+  /** BCP-47 code, or "auto" for automatic language detection. */
   language: string;
-  /**
-   * Phase C — BCP-47 codes for Chirp 3 code-switching. When this
-   * array is non-empty, it takes precedence over `language`. Pick
-   * 2-3 languages you speak and Chirp 3 switches between them
-   * mid-sentence (e.g. `["hi-IN", "en-US"]` for Hinglish).
-   */
-  multiLanguageCodes: string[];
   /** Mode id to use when no override is set. References Mode.id. */
   defaultModeId: string | null;
   /**
-   * Master AI-formatting switch. When ON AND `GCPSettings.geminiApiKey`
-   * is configured, every Chirp transcript is polished through
-   * Gemini 3.5 Flash-Lite using the active mode's system prompt
-   * (Code preserves technical terms, Email structures it as a
-   * proper email, etc.). Adds ~600-1500 ms latency per dictation.
+   * Master AI-formatting switch, and the tier selector for
+   * transcription (see docs/GEMINI_TRANSCRIBE_LIVE.md §3).
    *
-   * When OFF: pure raw Chirp output. No mode prompt, no Gemini
-   * polish, no formatting. Fastest path; for users who want their
-   * exact spoken words pasted verbatim.
-   *
-   * If autoFormat is ON but the API key is missing, falls back to
-   * Chirp's own `custom_prompt` biasing for partial style hints —
-   * better than raw, weaker than Gemini.
+   *   - OFF: Gemini 3.5 Transcribe Live runs in VERBATIM mode. Filler
+   *     words, stutters and false starts are all preserved. No AI step.
+   *   - ON, active mode has no prompt (the stock Auto mode): SMART
+   *     transcription. Google removes fillers, resolves spoken
+   *     self-corrections, and applies punctuation, capitalisation and
+   *     list/number/date formatting inside the transcription pass. Still
+   *     no separate AI round trip, so it stays fast.
+   *   - ON, active mode has a prompt (Professional, Email, Code, a
+   *     translation mode, or any custom mode): VERBATIM transcription
+   *     followed by Gemini 3.5 Flash-Lite applying that prompt.
    */
   autoFormat: boolean;
-  /**
-   * Phase C — Chirp 3 spoken punctuation. "Say 'comma' to get ,".
-   * Useful for email dictation; awkward for casual speech.
-   */
-  spokenPunctuation: boolean;
-  /**
-   * Phase C — Chirp 3 spoken emojis. "Say 'smiling emoji' to get 😊".
-   */
-  spokenEmojis: boolean;
-  /**
-   * Phase C — Chirp 3 profanity filter. Replaces profanity with
-   * asterisks ("f\*\*\*").
-   */
-  profanityFilter: boolean;
-
-  /**
-   * Chirp 3 endpointing sensitivity. Controls how quickly the model
-   * decides the speaker has finished a phrase and commits a final
-   * transcript.
-   *
-   *   - `"low"`      — patient. Waits for longer pauses before
-   *                    finalising. Better for slow / deliberate
-   *                    speech + users who pause mid-sentence.
-   *   - `"standard"` — default. Google's recommended setting for
-   *                    most general-purpose dictation.
-   *   - `"high"`     — snappy. Finalises on shorter pauses, shaving
-   *                    ~100-300 ms off short-utterance latency, but
-   *                    more likely to truncate if the user hesitates.
-   *
-   * Exposed in Settings → Transcription → Response speed.
-   */
-  endpointing: "low" | "standard" | "high";
 
   // Paste
   /** Restore the user's previous clipboard contents after paste. */
@@ -190,13 +151,8 @@ export const DEFAULT_SETTINGS: Settings = {
   micDeviceId: null,
   silenceDetectionSeconds: 3,
   language: "auto",
-  multiLanguageCodes: [],
   defaultModeId: "mode-auto",
   autoFormat: false,
-  spokenPunctuation: false,
-  spokenEmojis: false,
-  profanityFilter: false,
-  endpointing: "standard",
   restoreClipboard: false,
   pasteOverrides: [],
   storeAudio: false,
@@ -230,7 +186,7 @@ export interface GCPSettings {
    * never synced to Firestore (each machine configures its own).
    *
    * `null` / empty disables Gemini polish even when autoFormat is on;
-   * the pipeline gracefully falls back to Chirp's `custom_prompt`
+   * the pipeline uses SMART transcription instead of a mode prompt
    * biasing for partial formatting.
    */
   geminiApiKey: string | null;
@@ -243,7 +199,7 @@ export interface GCPSettings {
    *
    * - "aistudio": uses `geminiApiKey` above (free key from ai.dev).
    * - "vertex":   reuses the GCP service account already configured for
-   *   Chirp (no separate key). The user must enable the Vertex AI API
+   *   transcription (no separate key). The user must enable the Vertex AI API
    *   and grant `roles/aiplatform.user` on that service account. AI
    *   Studio keys are NOT accepted by Vertex, which is why Vertex goes
    *   through the service-account OAuth instead.
@@ -342,7 +298,7 @@ export interface Mode {
    * afterwards). The translation runs through Gemini polish,
    * so `Settings.autoFormat` must be ON and a Gemini API key
    * configured for the translation to actually take effect —
-   * without those, popo falls back to Chirp's original-language
+   * without those, popo keeps the original-language
    * transcript and the badge in ModeCard shows a warning.
    *
    * Session 51 — feature #12.
@@ -367,7 +323,7 @@ export interface SnippetExpansion {
   snippetId: string;
   /**
    * What the user actually said / was transcribed — e.g. if the
-   * trigger is "addr" but Chirp produced "Addr", this holds "Addr".
+   * trigger is "addr" but the model produced "Addr", this holds "Addr".
    */
   trigger: string;
   /** The replacement value that ended up in the paste. */
@@ -533,12 +489,12 @@ export interface Snippet {
 // ----- Dictionary (speech adaptation) ---------------------------------
 
 /**
- * A user-defined phrase hinted to Chirp 3's speech-adaptation layer.
+ * A user-defined phrase biased into the speech model.
  * Typical use: proper nouns ("Bengaluru", "Aarav"), technical terms
  * ("ReactJS", "Kubernetes"), brand names, or any word the model
  * mis-transcribes.
  *
- * Passed to Chirp 3 as `RecognitionConfig.adaptation.phrase_sets`
+ * Passed to Gemini 3.5 Transcribe Live as `customVocabulary`
  * with a default boost of ~10 (Google recommends binary-searching
  * from there; values 0–20, higher = stronger bias).
  *

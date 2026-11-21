@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Check, MagnifyingGlass } from "@phosphor-icons/react";
 import type { Mode } from "@popo/shared-types";
 import { useModesStore } from "../store/modesStore";
+import { useAppIconsStore } from "../store/appIconsStore";
 import { useSettingsStore } from "../store/settingsStore";
 import {
   rehydrateSettings,
@@ -27,28 +28,6 @@ import {
 function rehydrateFromLocalStorage(): void {
   rehydrateSettings();
   rehydrateModes();
-}
-
-/**
- * Build the `cmd_set_mode_bindings` payload from the latest mode snapshot.
- * The switcher does not mount useApplySettingsToRust, so a pick must push
- * its own binding update directly to Rust.
- */
-function buildModeBindingsPayload(
-  modes: Mode[],
-  defaultModeId: string | null | undefined,
-) {
-  return modes.map((mode) => ({
-    id: mode.id,
-    name: mode.name,
-    systemPrompt: mode.systemPrompt,
-    apps: mode.apps ?? [],
-    isDefault: defaultModeId
-      ? mode.id === defaultModeId
-      : !!mode.isDefault,
-    hotkey: (mode.hotkey ?? "").trim(),
-    soundPreset: mode.soundPreset ?? "default",
-  }));
 }
 
 /**
@@ -169,20 +148,37 @@ export default function QuickSwitcherPage() {
       if (!autoFormat) return;
 
       const next = mode.id;
-      useSettingsStore.getState().update({ defaultModeId: next });
 
-      const latestModes = useModesStore.getState().modes;
-      const payload = buildModeBindingsPayload(latestModes, next);
+      // One-shot override for the NEXT dictation, and nothing else.
+      //
+      // resolve_mode ranks an app binding (priority 2) above the default
+      // mode (priority 3), so the old approach of setting defaultModeId
+      // had no effect at all in any app that had a binding: dictating in
+      // Zed kept using Code however clearly the switcher checkmarked
+      // Auto. The UI asserted a state the engine ignored.
+      //
+      // priority 1 (`pending_forced_mode_id`) exists in Rust for exactly
+      // this and had no caller anywhere in the frontend. on_press reads it
+      // with `g.take()`, so it is consumed by one dictation and then gone.
+      //
+      // Deliberately NOT writing defaultModeId any more. An app binding is
+      // a standing RULE ("in Zed, always Code"); opening the switcher is a
+      // momentary EXCEPTION ("not this time"). An exception must outrank
+      // the rule but must not quietly rewrite your saved configuration —
+      // reaching for a quick override should not change what tomorrow
+      // looks like. Settings -> Formatting mode remains the one place that
+      // changes your default.
       try {
-        await invoke("cmd_set_mode_bindings", { bindings: payload });
+        await invoke("cmd_set_pending_forced_mode", { modeId: next });
       } catch (error) {
         // eslint-disable-next-line no-console
-        console.warn("[popo] cmd_set_mode_bindings failed:", error);
+        console.warn("[popo] cmd_set_pending_forced_mode failed:", error);
       }
 
       const systemPrompt =
-        latestModes.find((candidate) => candidate.id === next)?.systemPrompt ??
-        "";
+        useModesStore
+          .getState()
+          .modes.find((candidate) => candidate.id === next)?.systemPrompt ?? "";
       try {
         await invoke("cmd_set_auto_format_prompt", { prompt: systemPrompt });
       } catch (error) {
@@ -523,10 +519,120 @@ function ModeRow({
         {mode.name}
       </span>
 
-      {mode.hotkey?.trim() && (
-        <KeyChip>{mode.hotkey.trim()}</KeyChip>
-      )}
+      {/*
+        Apps bound to this mode.
+        ────────────────────────
+        Without this the switcher shows a checkmark against your default
+        and nothing else, so there is no way to tell that the mode which
+        will ACTUALLY run was decided by an app binding. That is exactly
+        the confusion worth removing: seeing Zed's icon on the Code row
+        explains, at a glance, why dictating in Zed uses Code no matter
+        what the checkmark says.
+
+        Capped at three, with a +N overflow, because a mode bound to a
+        dozen apps would otherwise push the name out of the row.
+      */}
+      <BoundApps apps={mode.apps} />
+
+      {mode.hotkey?.trim() && <KeyChip>{mode.hotkey.trim()}</KeyChip>}
     </div>
+  );
+}
+
+/** Max icons shown inline before collapsing into a +N chip. */
+const MAX_BOUND_ICONS = 3;
+
+/**
+ * Row of app icons for the apps bound to a mode.
+ *
+ * Falls back to a plain text count when we have no cached icon for an
+ * app: icons are harvested opportunistically from windows you have
+ * actually dictated into, so a freshly configured binding may have no
+ * bitmap yet. Showing nothing in that case would misrepresent the mode
+ * as unbound, which is the very thing this row exists to prevent.
+ */
+function BoundApps({ apps }: { apps: string[] | undefined }) {
+  const iconsByName = useAppIconsStore((s) => s.iconsByName);
+  if (!apps || apps.length === 0) return null;
+
+  // `iconFor` is an exact key match, but Rust resolves bindings
+  // case-insensitively (`a.to_lowercase() == app_lower` in resolve_mode).
+  // So a binding stored as "zed" would never find an icon cached under
+  // "Zed" and would silently render as a letter tile. Match the engine's
+  // leniency here rather than depend on the two spellings agreeing.
+  const lookup = (app: string): string | undefined => {
+    const exact = iconsByName[app];
+    if (exact) return exact;
+    const target = app.toLowerCase();
+    const hit = Object.keys(iconsByName).find(
+      (key) => key.toLowerCase() === target,
+    );
+    return hit ? iconsByName[hit] : undefined;
+  };
+
+  const shown = apps.slice(0, MAX_BOUND_ICONS);
+  const overflow = apps.length - shown.length;
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        flexShrink: 0,
+      }}
+      title={`Used automatically in: ${apps.join(", ")}`}
+    >
+      {shown.map((app) => {
+        // The store holds RAW base64, not a data URL — every other
+        // consumer (SessionRow, ModeCard, AppIconBubble, AppPicker) wraps
+        // it the same way. Passing the bare string to `src` silently
+        // fails to load and falls through to the letter tile below, which
+        // is exactly what happened on the first attempt here.
+        const b64 = lookup(app);
+        return b64 ? (
+          <img
+            key={app}
+            src={`data:image/png;base64,${b64}`}
+            alt=""
+            width={13}
+            height={13}
+            draggable={false}
+            style={{ display: "block", borderRadius: 2, opacity: 0.85 }}
+          />
+        ) : (
+          <span
+            key={app}
+            aria-hidden
+            style={{
+              width: 13,
+              height: 13,
+              borderRadius: 2,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "var(--bg-high)",
+              fontFamily: "var(--font-pixel-grid)",
+              fontSize: 8,
+              color: "var(--text-ghost)",
+            }}
+          >
+            {app.slice(0, 1).toUpperCase()}
+          </span>
+        );
+      })}
+      {overflow > 0 && (
+        <span
+          style={{
+            fontFamily: "var(--font-pixel-grid)",
+            fontSize: "var(--text-2xs)",
+            color: "var(--text-ghost)",
+          }}
+        >
+          +{overflow}
+        </span>
+      )}
+    </span>
   );
 }
 

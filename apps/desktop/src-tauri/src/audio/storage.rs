@@ -10,11 +10,11 @@
 //   - Native cpal capture is typically 48 kHz at f32 → 192 KB/sec.
 //     A 10-second recording = ~1.9 MB.
 //   - After downsampling to 16 kHz and converting to i16 (same signal
-//     we already send to GCP Chirp), it becomes 32 KB/sec → ~320 KB
+//     we already send to the speech engine), it becomes 32 KB/sec → ~320 KB
 //     for 10 seconds. That is 6× smaller with no perceptible quality
 //     loss for speech (16 kHz covers all speech frequencies; i16 gives
 //     96 dB dynamic range, more than adequate for voice).
-//   - The 16 kHz i16 samples are exactly what GCP Chirp receives.
+//   - The 16 kHz i16 samples are exactly what the speech engine receives.
 //     No second pass needed — we downsample once.
 //   - Standard PCM-16 WAV plays in every player (Windows Media Player,
 //     VLC, any browser, HTML5 Audio, etc.).
@@ -36,7 +36,7 @@ use std::path::PathBuf;
 ///
 /// `samples` is the raw f32 mono PCM at `input_sample_rate` (typically
 /// 48 kHz from cpal). This function downsamples via box-average to
-/// 16 kHz (same algorithm used by the GCP Chirp pipeline) and converts
+/// 16 kHz (same algorithm used by the transcription pipeline) and converts
 /// to i16 before writing.
 pub fn save_session_wav(
     app: &tauri::AppHandle,
@@ -67,7 +67,7 @@ pub fn save_session_wav(
     // signal. Built-in laptop mics often deliver peak ~0.001–0.005
     // (about -60 to -46 dBFS). When that gets converted to PCM-16,
     // the sample magnitudes are 30–160 out of 32767 — technically
-    // valid audio that Chirp can transcribe (it's designed for
+    // valid audio the model can transcribe (it's designed for
     // weak signal), but completely inaudible to the human ear on
     // playback. The user reported recordings being saved as
     // "silent" even though the transcript was correct.
@@ -76,7 +76,7 @@ pub fn save_session_wav(
     // by a single gain factor that brings peak to ~-3 dBFS (0.7).
     // This is a one-shot post-processing pass, NOT real-time AGC.
     // It only touches the file we save to disk; the live streaming
-    // path to Chirp continues to use raw audio (unchanged).
+    // streaming path continues to use raw audio (unchanged).
     //
     // Rules:
     //   - peak < 0.0001 (essentially silence): don't amplify (would

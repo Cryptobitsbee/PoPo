@@ -46,6 +46,11 @@ export default function ModeCard({
     ? mode.id === defaultModeId
     : mode.isDefault;
 
+  // An empty prompt is the signal for the no-LLM path: Gemini 3.5
+  // Transcribe Live's SMART mode does the cleanup inline, so no
+  // Flash-Lite round trip happens. See docs/GEMINI_TRANSCRIBE_LIVE.md §3.
+  const isSmartMode = !mode.systemPrompt.trim();
+
   return (
     <article
       onClick={onEdit}
@@ -127,7 +132,15 @@ export default function ModeCard({
         {mode.name}
       </h3>
 
-      {/* Prompt preview — 3-line clamp per brief */}
+      {/*
+        Prompt preview — 3-line clamp per brief.
+
+        A prompt-less mode (the stock Auto) is not a broken mode with a
+        missing prompt: it is the no-LLM path, handled entirely by
+        Gemini 3.5 Transcribe Live's SMART transcription. Describing that
+        here keeps the card the same height as its siblings in the grid
+        and explains the behaviour rather than rendering blank space.
+      */}
       <p
         style={{
           marginTop: "var(--sp-2)",
@@ -135,14 +148,21 @@ export default function ModeCard({
           fontFamily: "var(--font-pixel-line)",
           fontSize: "var(--text-sm)",
           lineHeight: 1.4,
-          color: "var(--text-secondary)",
+          color: isSmartMode
+            ? "var(--text-secondary)"
+            : "var(--text-secondary)",
           display: "-webkit-box",
           WebkitBoxOrient: "vertical",
           WebkitLineClamp: 3,
           overflow: "hidden",
+          // Reserve three lines so every card in the row shares a
+          // baseline height regardless of prompt length.
+          minHeight: "calc(var(--text-sm) * 1.4 * 3)",
         }}
       >
-        {mode.systemPrompt}
+        {isSmartMode
+          ? "Cleaned up during transcription: filler words removed, spoken corrections resolved, punctuation, capitalisation, and list, number and date formatting applied. No separate AI step, so it is the fastest mode."
+          : mode.systemPrompt}
       </p>
 
       {/* Footer */}
@@ -160,6 +180,12 @@ export default function ModeCard({
         }}
       >
         <Chip>{mode.language ?? "any language"}</Chip>
+        {isSmartMode && (
+          <>
+            <span style={{ color: "var(--text-ghost)" }}>·</span>
+            <Chip>smart transcription</Chip>
+          </>
+        )}
         {mode.translateTo && (
           <>
             <span style={{ color: "var(--text-ghost)" }}>·</span>

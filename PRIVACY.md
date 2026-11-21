@@ -34,9 +34,9 @@ Local app-icon discovery can inspect running/installed application names, window
 
 ## Data sent to service providers
 
-### Google Cloud Speech-to-Text
+### Google Cloud the Vertex AI Live API
 
-During a dictation/test, PoPo sends audio, language/recognition settings, selected mode prompt where applicable, and dictionary adaptation phrases directly to Google Cloud Speech-to-Text using the service account selected by the user. Google returns transcript text. Billing and provider-side retention are controlled by that user's GCP project and Google's terms/settings.
+During a dictation/test, PoPo sends audio, language/recognition settings, selected mode prompt where applicable, and dictionary adaptation phrases directly to Google Cloud the Vertex AI Live API using the service account selected by the user. Google returns transcript text. Billing and provider-side retention are controlled by that user's GCP project and Google's terms/settings.
 
 ### Gemini (optional)
 
@@ -45,7 +45,7 @@ When AI formatting is enabled:
 - **Google AI Studio** receives the raw transcript and selected system/mode prompt using the DPAPI-protected API key; or
 - **Vertex AI** receives the same content using the configured GCP service account and project.
 
-If Gemini is disabled, unconfigured, or fails, PoPo uses the Speech-to-Text result without that Gemini request.
+If Gemini is disabled, unconfigured, or fails, PoPo uses the the Vertex AI Live API result without that Gemini request.
 
 ### Firebase Authentication and sync (optional)
 

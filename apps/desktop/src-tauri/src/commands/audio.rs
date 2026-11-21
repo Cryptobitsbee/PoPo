@@ -103,9 +103,20 @@ pub fn cmd_get_audio_peaks(
     use hound::WavReader;
 
     let safe_path = validated_path(&app, &window, &path)?;
-    let bar_count = bar_count.clamp(1, 256);
     let reader = WavReader::open(&safe_path).map_err(|e| format!("failed to open WAV: {e}"))?;
+    peaks_from_reader(reader, bar_count)
+}
 
+/// Peak-per-bucket on channel 0, normalized to 0..1 by the global max.
+///
+/// Generic over the reader so the local-file and cloud-download commands
+/// share one implementation and cannot produce different waveforms for
+/// the same audio.
+fn peaks_from_reader<R: std::io::Read>(
+    reader: hound::WavReader<R>,
+    bar_count: usize,
+) -> Result<Vec<f32>, String> {
+    let bar_count = bar_count.clamp(1, 256);
     let spec = reader.spec();
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
@@ -131,6 +142,8 @@ pub fn cmd_get_audio_peaks(
     }
 
     let channels = spec.channels as usize;
+    // Channel 0 only. Averaging channels dilutes a mic-array recording
+    // (Session 45), so this must match `audio/capture.rs`.
     let mono: Vec<f32> = if channels <= 1 {
         samples
     } else {
@@ -161,8 +174,150 @@ pub fn cmd_get_audio_peaks(
     Ok(peaks)
 }
 
+/// Host that Firebase Storage download URLs must come from.
+const FIREBASE_STORAGE_HOST: &str = "firebasestorage.googleapis.com";
+
+/// Cap on a cloud audio download. Storage rules already limit objects to
+/// 10 MiB; this is the client-side belt to that braces.
+const MAX_CLOUD_AUDIO_BYTES: usize = 12 * 1024 * 1024;
+
+/// Validate a Firebase Storage download URL before Rust fetches it.
+///
+/// This command makes an outbound request on the frontend's behalf, so the
+/// URL is treated as untrusted input even though it originates from
+/// Firebase's own `getDownloadURL`. Without these checks the command would
+/// be an SSRF primitive: any webview could ask Rust to GET an arbitrary
+/// host, including link-local metadata endpoints.
+///
+/// Requirements: HTTPS, exactly the Firebase Storage host (no subdomain
+/// suffix tricks), and a path under the per-user `audio/` prefix that
+/// Storage Rules already scope to the owner's UID.
+fn validate_cloud_audio_url(raw: &str) -> Result<(), String> {
+    let rest = raw
+        .strip_prefix("https://")
+        .ok_or_else(|| "cloud audio URL must use https".to_string())?;
+
+    let host_end = rest.find('/').unwrap_or(rest.len());
+    let host = &rest[..host_end];
+    if host != FIREBASE_STORAGE_HOST {
+        return Err(format!("unexpected cloud audio host: {host}"));
+    }
+
+    // Firebase percent-encodes the object path, so `audio/` arrives as
+    // `audio%2F`. Accept either form rather than assuming one.
+    let path = &rest[host_end..];
+    if !(path.contains("/o/audio%2F") || path.contains("/o/audio/")) {
+        return Err("cloud audio URL is not under the audio/ prefix".into());
+    }
+
+    Ok(())
+}
+
+/// Compute waveform peaks for a recording that exists only in the cloud.
+///
+/// Why this is a Rust command rather than a `fetch` in the webview:
+/// Firebase Storage does not return an `Access-Control-Allow-Origin`
+/// header, so a cross-origin `fetch` is blocked by CORS. `<audio>` plays
+/// the same URL fine because media elements are exempt from CORS, which
+/// is why playback works while the waveform did not. Rust has no CORS, so
+/// the download happens here and only the tiny peak array crosses IPC.
+///
+/// Needed because sessions can legitimately have no local WAV: since
+/// Session 61 new session documents do not persist a machine-local path,
+/// and older documents may point at a file that no longer exists on this
+/// machine (`os error 2`).
+#[tauri::command]
+pub async fn cmd_get_cloud_audio_peaks(
+    window: WebviewWindow,
+    url: String,
+    bar_count: usize,
+) -> Result<Vec<f32>, String> {
+    require_main_window(&window)?;
+    validate_cloud_audio_url(&url)?;
+
+    let response = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("cloud audio download failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "cloud audio download returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("cloud audio body read failed: {e}"))?;
+
+    if bytes.len() > MAX_CLOUD_AUDIO_BYTES {
+        return Err("cloud audio file is larger than expected".into());
+    }
+
+    peaks_from_wav_bytes(&bytes, bar_count)
+}
+
+/// Shared peak extraction so the local-file and cloud paths cannot drift.
+fn peaks_from_wav_bytes(bytes: &[u8], bar_count: usize) -> Result<Vec<f32>, String> {
+    use hound::WavReader;
+    let reader = WavReader::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("failed to parse WAV: {e}"))?;
+    peaks_from_reader(reader, bar_count)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::validate_cloud_audio_url;
+
+    const OK_URL: &str = "https://firebasestorage.googleapis.com/v0/b/popo-flow.firebasestorage.app/o/audio%2Fuid123%2Fsess.wav?alt=media&token=abc";
+
+    #[test]
+    fn accepts_a_real_firebase_audio_url() {
+        assert!(validate_cloud_audio_url(OK_URL).is_ok());
+    }
+
+    #[test]
+    fn rejects_plain_http() {
+        let http = OK_URL.replace("https://", "http://");
+        assert!(validate_cloud_audio_url(&http).is_err());
+    }
+
+    #[test]
+    fn rejects_other_hosts() {
+        assert!(
+            validate_cloud_audio_url("https://evil.example.com/v0/b/x/o/audio%2Fa.wav").is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_host_suffix_spoofing() {
+        // A naive `ends_with` check would accept this.
+        assert!(validate_cloud_audio_url(
+            "https://firebasestorage.googleapis.com.evil.test/v0/b/x/o/audio%2Fa.wav"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_link_local_metadata_endpoint() {
+        // The SSRF case this validation exists to prevent.
+        assert!(validate_cloud_audio_url("https://169.254.169.254/latest/meta-data/").is_err());
+    }
+
+    #[test]
+    fn rejects_objects_outside_the_audio_prefix() {
+        assert!(validate_cloud_audio_url(
+            "https://firebasestorage.googleapis.com/v0/b/popo-flow/o/secrets%2Fkey.json"
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
     use super::*;
     use std::fs;
 

@@ -181,12 +181,12 @@ pub async fn cmd_gcp_test_connection(state: State<'_, PopoState>) -> Result<GcpT
 
 /// Smoke-test the currently-selected Gemini provider (Settings →
 /// Transcription → Test Gemini connection). Mirrors
-/// `cmd_gcp_test_connection` for Chirp, but routes to whichever Gemini
+/// `cmd_gcp_test_connection`, but routes to whichever Gemini
 /// backend the user picked:
 ///   - "aistudio": uses `GCPSettings.geminiApiKey` (pushed via
 ///     `cmd_set_gemini_api_key`).
 ///   - "vertex":   reuses the GCP service-account OAuth token + project
-///     id (same credential as Chirp), region from `vertex_location`.
+///     id (same credential as transcription), region from `vertex_location`.
 ///
 /// Sends a 1-token `generateContent` request and reports the result so
 /// the user knows the provider works before relying on it mid-paste.

@@ -244,7 +244,7 @@ export function subscribeToSnippets(
 
 // ─── Dictionary ───────────────────────────────────────
 //
-// Phrase hints biased into Chirp 3's speech-adaptation layer. See
+// Custom vocabulary biased into the speech model. See
 // dictionaryStore + gcp::streaming::start (adaptation param).
 
 function dictionaryCol(uid: string): CollectionReference<DocumentData> {

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Check } from "@phosphor-icons/react";
 import type { Mode } from "@popo/shared-types";
 import Modal from "../shared/Modal";
 import Input from "../shared/Input";
@@ -166,6 +167,19 @@ export default function ModeEditor({
     setSoundPreset((mode?.soundPreset as SoundPreset) ?? "default");
   }, [open, mode]);
 
+  // An existing mode saved with no prompt is the no-LLM path: Gemini 3.5
+  // Transcribe Live's SMART transcription does the cleanup inline, so the
+  // prompt, translation and output-format controls have nothing to act
+  // on and are hidden. The outer controls (dedicated hotkey, app
+  // bindings, sound, language override) still apply, because those
+  // govern WHEN the mode is chosen rather than how the AI rewrites text.
+  //
+  // Deliberately keyed on the SAVED mode, not on live `systemPrompt`
+  // state, so typing into a new mode's empty prompt box doesn't make the
+  // form flip layout underneath the user.
+  const isSmartTranscriptionMode =
+    !!mode && !(mode.systemPrompt ?? "").trim();
+
   const canSave = name.trim().length > 0;
 
   /**
@@ -263,17 +277,104 @@ export default function ModeEditor({
           />
         </Field>
 
-        <Field
-          label="System prompt"
-          description="Instructions the AI applies to every transcript that uses this mode."
-        >
-          <Textarea
-            rows={6}
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            placeholder="Rewrite the transcript as…"
-          />
-        </Field>
+        {isSmartTranscriptionMode ? (
+          <Field
+            label="How this mode formats"
+            description="The speech model does the cleanup as it transcribes, so there is nothing to configure."
+          >
+            <div
+              style={{
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: "var(--radius-button)",
+                padding: "var(--sp-4)",
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontFamily: "var(--font-pixel-square)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                Smart transcription
+              </p>
+
+              <div
+                style={{
+                  marginTop: "var(--sp-3)",
+                  display: "grid",
+                  gap: "var(--sp-2)",
+                }}
+              >
+                {[
+                  "Drops filler words, stutters and false starts",
+                  'Applies the correction when you say "Tuesday, sorry, Wednesday"',
+                  "Adds punctuation, capitalisation and paragraph breaks",
+                  "Formats numbers, dates and lists",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "var(--sp-2)",
+                    }}
+                  >
+                    <Check
+                      size={12}
+                      weight="regular"
+                      color="var(--text-secondary)"
+                      style={{ flexShrink: 0, marginTop: 3 }}
+                    />
+                    <span
+                      style={{
+                        fontFamily: "var(--font-pixel-line)",
+                        fontSize: "var(--text-sm)",
+                        lineHeight: 1.45,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      {item}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <p
+                style={{
+                  margin: "var(--sp-4) 0 0",
+                  paddingTop: "var(--sp-3)",
+                  borderTop: "1px solid var(--border-faint)",
+                  fontFamily: "var(--font-pixel-line)",
+                  fontSize: "var(--text-xs)",
+                  lineHeight: 1.5,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                No second AI call runs, which makes this the fastest mode. A
+                prompt, output format and translation would each need that call,
+                so those settings are hidden here. Use another mode when you
+                need them.
+              </p>
+            </div>
+          </Field>
+        ) : (
+          <>
+            <Field
+              label="System prompt"
+              description="Instructions the AI applies to every transcript that uses this mode."
+            >
+              <Textarea
+                rows={6}
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="Rewrite the transcript as…"
+              />
+            </Field>
+          </>
+        )}
 
         <Field
           label="Language override"
@@ -288,34 +389,38 @@ export default function ModeEditor({
           />
         </Field>
 
-        <Field
-          label="Translate output to"
-          hint={
-            translateTo
-              ? "Translation runs through Gemini polish — requires Auto-format ON in Settings + a Gemini API key."
-              : "Translate the cleaned transcript into another language before pasting."
-          }
-        >
-          <Select
-            value={translateTo}
-            options={TRANSLATE_OPTIONS}
-            onChange={handleTranslateToChange}
-            aria-label="Translate output to"
-            minWidth={240}
-          />
-        </Field>
+        {!isSmartTranscriptionMode && (
+          <>
+            <Field
+              label="Translate output to"
+              hint={
+                translateTo
+                  ? "Translation runs through the AI polish step, so Auto-format must be ON in Settings."
+                  : "Translate the cleaned transcript into another language before pasting."
+              }
+            >
+              <Select
+                value={translateTo}
+                options={TRANSLATE_OPTIONS}
+                onChange={handleTranslateToChange}
+                aria-label="Translate output to"
+                minWidth={240}
+              />
+            </Field>
 
-        <Field
-          label="Output format"
-          description="Shape the rewritten text takes. Raw skips reformatting entirely."
-        >
-          <SegmentedControl<OutputFormat>
-            value={outputFormat}
-            onChange={setOutputFormat}
-            options={[...OUTPUT_OPTIONS]}
-            aria-label="Output format"
-          />
-        </Field>
+            <Field
+              label="Output format"
+              description="Shape the rewritten text takes. Raw skips reformatting entirely."
+            >
+              <SegmentedControl<OutputFormat>
+                value={outputFormat}
+                onChange={setOutputFormat}
+                options={[...OUTPUT_OPTIONS]}
+                aria-label="Output format"
+              />
+            </Field>
+          </>
+        )}
 
         <Field
           label="Apply in apps"

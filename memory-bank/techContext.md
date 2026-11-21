@@ -76,8 +76,8 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification    = "2"
 tauri-plugin-fs              = "2"
 cpal   = "0.15"
-tonic  = "0.12"
-prost  = "0.13"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+futures = "0.3"
 tokio  = { version = "1", features = ["full"] }
 serde  = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -94,8 +94,7 @@ gcp-auth = "0.12"
 rusqlite = { version = "0.31", features = ["bundled"] }
 ```
 
-Additional dev dep: `tonic-build` to generate Rust from
-`google/cloud/speech/v2/*.proto` during build.
+No proto codegen: the Live API is JSON over WebSocket, so tonic/prost and the vendored Speech v2 protos were all removed.
 
 ## Initial setup commands
 
@@ -131,7 +130,7 @@ client secret and no runtime GCP/Gemini credential in `VITE_*`.
 GCP service account JSON path is NOT in env. It is configured per-user in
 Settings → GCP Setup. popo stores only path/project/language metadata in
 `%APPDATA%\ai.popo.desktop\gcp.json`; the original selected JSON is never
-copied and must remain available for Speech-to-Text and Vertex AI.
+copied and must remain available for transcription and AI formatting.
 
 ## Audio pipeline specs
 
@@ -145,35 +144,38 @@ copied and must remain available for Speech-to-Text and Vertex AI.
   buckets (simple FFT via `rustfft` if we want real spectrum; v0.1 may use
   time-domain RMS buckets across 16 short windows — both visually acceptable).
 
-## GCP Speech-to-Text config
+## Speech-to-text config
 
-- API: **Speech-to-Text v2** (`speech.googleapis.com`)
-- RPC: `StreamingRecognize`
-- Model: `chirp_2` (stable) with upgrade path to `chirp_3` once GA verified at
-  build time (as of late 2025, Chirp 3 reached GA in Oct 2025).
-- Config:
-  ```
-  RecognitionConfig {
-    features: {
-      enable_automatic_punctuation: true,
-      enable_word_time_offsets: true,
-    },
-    language_codes: [<user setting>],   // "auto" supported via Chirp
-    model: "chirp_2",
-    auto_decoding_config: {},            // let Google decode the 16k PCM
-  }
-  StreamingRecognitionConfig {
-    config: RecognitionConfig,
-    streaming_features: { interim_results: true },
-  }
-  ```
-- Auth: `gcp-auth` using the user-provided service account JSON. Token cached
-  per-process, refreshed proactively.
-- Speech region: `eu` GA multi-region. The former preview `asia-south1`
-  endpoint rejected Chirp 3 locale `auto` as no longer generally available.
-- Gemini Vertex location: `global` by default; only `global`, `us`, and `eu`
-  are offered for Gemini 3.5 Flash-Lite. Legacy single-region values normalize
-  to `global`.
+- API: **Vertex AI Live API**, `BidiGenerateContent` over WebSocket
+  (`wss://aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent`).
+- Model: `gemini-3.5-transcribe-live-preview`. The `-preview` suffix is
+  required on Vertex; the unsuffixed ID is AI Studio's and does not resolve.
+- Location: **`global` only**. Single- and multi-region are "coming soon".
+  There is no user-facing region setting. Do NOT reuse
+  `gemini::normalize_vertex_location`, which governs Flash-Lite's real
+  global/us/eu choice.
+- Setup message: `inputAudioTranscription` carries `languageCodes` (empty =
+  automatic detection with native mid-utterance code-switching),
+  `customVocabulary` (capped 1000, best under ~100), and `mode`
+  (`VERBATIM` or `SMART`); `realtimeInputConfig.automaticActivityDetection.disabled`
+  enables manual VAD so push-to-talk owns turn boundaries.
+- Audio: raw 16-bit PCM, 16 kHz, mono, little-endian, base64 in ~100 ms
+  chunks. Conversion lives in `audio/pcm.rs`.
+- Two hard constraints: clients MUST await `setupComplete` before sending
+  audio (otherwise short clips return empty transcripts), and setup
+  parameters are immutable once processed, so sockets are keyed on a
+  config fingerprint over (mode, languages, dictionary).
+- Session resumption is deliberately DISABLED; it caches audio and text
+  server-side. Reconnect fresh on `goAway` (60 s before the ~10 min
+  connection ceiling).
+- Auth: `gcp_auth` with the user-provided service-account JSON, scope
+  `cloud-platform`. Requires the **Vertex AI API** enabled and
+  **`roles/aiplatform.user`**. Pre-migration installs holding only
+  `roles/speech.client` will fail until updated.
+- Gemini Vertex location (post-processing, unrelated to STT): `global` by
+  default; only `global`, `us`, and `eu` are offered for Gemini 3.5
+  Flash-Lite. Legacy single-region values normalize to `global`.
+- Full reference: `docs/GEMINI_TRANSCRIBE_LIVE.md`.
 
 ## Post-processing
 
@@ -181,10 +183,13 @@ copied and must remain available for Speech-to-Text and Vertex AI.
 - Provider is explicit and machine-local:
   - AI Studio uses the configured API key.
   - Vertex AI reuses the GCP service-account OAuth token/project and selected location.
-- Auto-format is the master gate for all modes and Gemini polish.
+- Auto-format is the master gate, and also selects the transcription
+  tier: off means `VERBATIM` with no AI call; on with no mode prompt
+  means `SMART` with no AI call; on with a mode prompt means `VERBATIM`
+  plus Flash-Lite.
 - Request keeps `maxOutputTokens`; deprecated 3.5 sampling fields and
   2.5-only `thinkingBudget` are omitted. Default thinking is minimal.
-- 12-second ceiling; any error fails open to the raw Chirp transcript.
+- 12-second ceiling; any error fails open to the unpolished transcript.
 
 ## Firebase
 

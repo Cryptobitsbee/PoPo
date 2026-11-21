@@ -7,6 +7,7 @@ import {
   formatCost,
   formatHoursCompact,
 } from "../lib/stats-compute";
+import PageShell from "../components/layout/PageShell";
 import StatGrid from "../components/stats/StatGrid";
 import StatCard from "../components/stats/StatCard";
 import LanguageBreakdown from "../components/stats/LanguageBreakdown";
@@ -37,14 +38,10 @@ export default function StatsPage() {
   const weekDays = useMemo(() => computeWeekBuckets(sessions), [sessions]);
 
   return (
-    <div
-      style={{
-        padding: "var(--sp-8) var(--sp-10)",
-        maxWidth: 1040,
-        margin: "0 auto",
-      }}
-    >
-      <h1
+    <PageShell
+      header={
+        <>
+          <h1
         style={{
           margin: 0,
           fontFamily: "var(--font-pixel-square)",
@@ -68,9 +65,12 @@ export default function StatsPage() {
           lineHeight: 1.5,
         }}
       >
-        Usage across all your sessions. Cost is estimated at the Chirp standard
-        tier ($0.016 / minute) and ignores the 60-min monthly free allowance.
-      </p>
+        Usage across all your sessions. Cost is an estimate recorded per
+        session, around $0.009 a minute today. Treat it as a gauge, not a bill.
+          </p>
+        </>
+      }
+    >
 
       {/* 4-metric headline */}
       <StatGrid>
@@ -92,8 +92,6 @@ export default function StatsPage() {
       <LanguageBreakdown buckets={languageBuckets} />
       <WeekHeatmap days={weekDays} />
 
-      {/* Bottom breathing room */}
-      <div style={{ height: "var(--sp-12)" }} />
-    </div>
+    </PageShell>
   );
 }

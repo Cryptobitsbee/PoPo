@@ -7,8 +7,8 @@
 │  Rust (src-tauri) — the daemon                               │
 │                                                              │
 │  cpal audio capture ─┐                                       │
-│                      ├─► hand-rolled resample ─► tonic gRPC ─► GCP STT v2
-│  global-shortcut ────┤                                     Chirp 3 streaming
+│                      ├─► hand-rolled resample ─► WebSocket ─► Vertex AI Live API
+│  global-shortcut ────┤                                     Transcribe Live
 │                      │                                       │
 │  windows-rs focus ───┤                                       ▼
 │  arboard clipboard ──┤                                   transcript
@@ -206,7 +206,7 @@ which is an animation detail inside the single motion.div).
   Flash-Lite Vertex calls must use `global`, `us`, or `eu`. Normalize stale
   persisted locations both at the IPC boundary and URL builder.
 - Do not keep a latency-optimized preview Speech endpoint after Google removes
-  feature availability. Chirp 3 production traffic uses a documented GA
+  feature availability. Gemini 3.5 Transcribe Live production traffic uses a documented GA
   multi-region (`eu` here); `language_codes=["auto"]` remains the official
   language-agnostic request there.
 - A disabled master feature must also disable its selector UX. Retaining a

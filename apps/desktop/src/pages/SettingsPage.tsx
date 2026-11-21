@@ -14,6 +14,7 @@ import { useAuthStore } from "../store/authStore";
 import { useHistoryStore } from "../store/historyStore";
 import { signInWithGoogle, signOut as fbSignOut } from "../lib/firebase";
 import { useModesStore } from "../store/modesStore";
+import PageShell from "../components/layout/PageShell";
 import SettingsGroup from "../components/settings/SettingsGroup";
 import SettingRow from "../components/settings/SettingRow";
 import GCPSetup from "../components/settings/GCPSetup";
@@ -26,7 +27,6 @@ import Select from "../components/shared/Select";
 import SegmentedControl from "../components/shared/SegmentedControl";
 import HotkeyInput from "../components/shared/HotkeyInput";
 import Button from "../components/shared/Button";
-import MultiSelect from "../components/shared/MultiSelect";
 
 /**
  * SettingsPage — brief §3 Settings.
@@ -49,123 +49,127 @@ const LANGUAGE_OPTIONS: {
   {
     value: "auto",
     label: "Auto-detect",
-    description: "Chirp detects from 125+ languages",
+    description: "Detects across 85+ languages, switches mid-sentence",
   },
 
-  // ── GA languages (reliable for streaming + all features) ──
-  { value: "en-US", label: "English (US)", description: "GA" },
-  { value: "en-GB", label: "English (UK)", description: "GA" },
-  { value: "en-IN", label: "English (India)", description: "GA" },
-  { value: "en-AU", label: "English (Australia)", description: "GA" },
-  { value: "hi-IN", label: "Hindi", description: "GA" },
-  { value: "fr-FR", label: "French (France)", description: "GA" },
-  { value: "fr-CA", label: "French (Canada)", description: "GA" },
-  { value: "de-DE", label: "German", description: "GA" },
-  { value: "es-ES", label: "Spanish (Spain)", description: "GA" },
-  { value: "es-US", label: "Spanish (US)", description: "GA" },
-  { value: "it-IT", label: "Italian", description: "GA" },
-  { value: "ja-JP", label: "Japanese", description: "GA" },
-  { value: "ko-KR", label: "Korean", description: "GA" },
-  { value: "pt-BR", label: "Portuguese (Brazil)", description: "GA" },
-  { value: "pt-PT", label: "Portuguese (Portugal)", description: "GA" },
-  { value: "nl-NL", label: "Dutch", description: "GA" },
-  { value: "pl-PL", label: "Polish", description: "GA" },
-  { value: "ru-RU", label: "Russian", description: "GA" },
-  { value: "sv-SE", label: "Swedish", description: "GA" },
-  { value: "da-DK", label: "Danish", description: "GA" },
-  { value: "fi-FI", label: "Finnish", description: "GA" },
-  { value: "el-GR", label: "Greek", description: "GA" },
-  { value: "tr-TR", label: "Turkish", description: "GA" },
-  { value: "uk-UA", label: "Ukrainian", description: "GA" },
-  { value: "vi-VN", label: "Vietnamese", description: "GA" },
-  { value: "ro-RO", label: "Romanian", description: "GA" },
-  { value: "hr-HR", label: "Croatian", description: "GA" },
-  { value: "ca-ES", label: "Catalan", description: "GA" },
-  { value: "cmn-Hans-CN", label: "Chinese (Simplified)", description: "GA" },
-
-  // ── Indian languages (Preview — may have limited streaming support) ──
-  { value: "te-IN", label: "Telugu", description: "Preview" },
-  { value: "ta-IN", label: "Tamil", description: "Preview" },
-  { value: "bn-IN", label: "Bengali (India)", description: "Preview" },
-  { value: "bn-BD", label: "Bengali (Bangladesh)", description: "Preview" },
-  { value: "mr-IN", label: "Marathi", description: "Preview" },
-  { value: "gu-IN", label: "Gujarati", description: "Preview" },
-  { value: "kn-IN", label: "Kannada", description: "Preview" },
-  { value: "ml-IN", label: "Malayalam", description: "Preview" },
-  { value: "pa-Guru-IN", label: "Punjabi", description: "Preview" },
-  { value: "or-IN", label: "Odia", description: "Preview" },
-  { value: "as-IN", label: "Assamese", description: "Preview" },
-  { value: "ne-NP", label: "Nepali", description: "Preview" },
-
-  // ── East & Southeast Asian (Preview) ──
+  // ── Supported ──────────────────────────────────────────────
+  // Google's own readiness rating for Gemini 3.5 Transcribe. These
+  // are the locales it is fully tuned for.
+  { value: "en-US", label: "English (US)", description: "Supported" },
+  { value: "en-GB", label: "English (UK)", description: "Supported" },
+  { value: "en-IN", label: "English (India)", description: "Supported" },
+  { value: "en-AU", label: "English (Australia)", description: "Supported" },
+  { value: "hi-IN", label: "Hindi", description: "Supported" },
+  { value: "es-ES", label: "Spanish (Spain)", description: "Supported" },
+  { value: "es-US", label: "Spanish (US)", description: "Supported" },
+  { value: "fr-FR", label: "French", description: "Supported" },
+  { value: "fr-CA", label: "French (Canada)", description: "Supported" },
+  { value: "de-DE", label: "German", description: "Supported" },
+  { value: "it-IT", label: "Italian", description: "Supported" },
+  { value: "pt-BR", label: "Portuguese (Brazil)", description: "Supported" },
+  { value: "pt-PT", label: "Portuguese (Portugal)", description: "Supported" },
+  { value: "nl-NL", label: "Dutch", description: "Supported" },
+  { value: "pl-PL", label: "Polish", description: "Supported" },
+  { value: "ro-RO", label: "Romanian", description: "Supported" },
+  { value: "ru-RU", label: "Russian", description: "Supported" },
+  { value: "uk-UA", label: "Ukrainian", description: "Supported" },
+  { value: "hr-HR", label: "Croatian", description: "Supported" },
+  { value: "ca-ES", label: "Catalan", description: "Supported" },
+  { value: "da-DK", label: "Danish", description: "Supported" },
+  { value: "fi-FI", label: "Finnish", description: "Supported" },
+  { value: "sv-SE", label: "Swedish", description: "Supported" },
+  { value: "el-GR", label: "Greek", description: "Supported" },
+  { value: "tr-TR", label: "Turkish", description: "Supported" },
+  { value: "ja-JP", label: "Japanese", description: "Supported" },
+  { value: "ko-KR", label: "Korean", description: "Supported" },
   {
-    value: "cmn-Hant-TW",
-    label: "Chinese (Traditional)",
-    description: "Preview",
+    value: "cmn-Hans-CN",
+    label: "Mandarin Chinese (Simplified)",
+    description: "Supported",
   },
-  { value: "yue-Hant-HK", label: "Cantonese", description: "Preview" },
-  { value: "id-ID", label: "Indonesian", description: "Preview" },
-  { value: "ms-MY", label: "Malay", description: "Preview" },
-  { value: "th-TH", label: "Thai", description: "Preview" },
-  { value: "fil-PH", label: "Filipino", description: "Preview" },
-  { value: "jv-ID", label: "Javanese", description: "Preview" },
-  { value: "km-KH", label: "Khmer", description: "Preview" },
-  { value: "lo-LA", label: "Lao", description: "Preview" },
-  { value: "my-MM", label: "Burmese", description: "Preview" },
+  { value: "vi-VN", label: "Vietnamese", description: "Supported" },
 
-  // ── Middle East & Central Asia (Preview) ──
-  { value: "ar-SA", label: "Arabic (Saudi Arabia)", description: "Preview" },
-  { value: "ar-EG", label: "Arabic (Egypt)", description: "Preview" },
-  { value: "ar-AE", label: "Arabic (UAE)", description: "Preview" },
-  { value: "fa-IR", label: "Persian", description: "Preview" },
-  { value: "iw-IL", label: "Hebrew", description: "Preview" },
-  { value: "az-AZ", label: "Azerbaijani", description: "Preview" },
-  { value: "kk-KZ", label: "Kazakh", description: "Preview" },
-  { value: "uz-UZ", label: "Uzbek", description: "Preview" },
-  { value: "ky-KG", label: "Kyrgyz", description: "Preview" },
-
-  // ── European (Preview) ──
-  { value: "cs-CZ", label: "Czech", description: "Preview" },
-  { value: "hu-HU", label: "Hungarian", description: "Preview" },
-  { value: "sk-SK", label: "Slovak", description: "Preview" },
-  { value: "bg-BG", label: "Bulgarian", description: "Preview" },
-  { value: "sr-RS", label: "Serbian", description: "Preview" },
-  { value: "sl-SI", label: "Slovenian", description: "Preview" },
-  { value: "et-EE", label: "Estonian", description: "Preview" },
-  { value: "lv-LV", label: "Latvian", description: "Preview" },
-  { value: "lt-LT", label: "Lithuanian", description: "Preview" },
-  { value: "no-NO", label: "Norwegian", description: "Preview" },
-  { value: "is-IS", label: "Icelandic", description: "Preview" },
-  { value: "mk-MK", label: "Macedonian", description: "Preview" },
-  { value: "sq-AL", label: "Albanian", description: "Preview" },
-  { value: "eu-ES", label: "Basque", description: "Preview" },
-  { value: "gl-ES", label: "Galician", description: "Preview" },
-  { value: "ka-GE", label: "Georgian", description: "Preview" },
-  { value: "hy-AM", label: "Armenian", description: "Preview" },
-  { value: "mt-MT", label: "Maltese", description: "Preview" },
-  { value: "lb-LU", label: "Luxembourgish", description: "Preview" },
-  { value: "cy-GB", label: "Welsh", description: "Preview" },
-
-  // ── African (Preview) ──
-  { value: "sw-KE", label: "Swahili", description: "Preview" },
-  { value: "am-ET", label: "Amharic", description: "Preview" },
-  { value: "af-ZA", label: "Afrikaans", description: "Preview" },
-  { value: "ha-NG", label: "Hausa", description: "Preview" },
-  { value: "yo-NG", label: "Yoruba", description: "Preview" },
-  { value: "zu-ZA", label: "Zulu", description: "Preview" },
-  { value: "xh-ZA", label: "Xhosa", description: "Preview" },
-  { value: "wo-SN", label: "Wolof", description: "Preview" },
-
-  // ── Latin American (Preview) ──
-  { value: "es-MX", label: "Spanish (Mexico)", description: "Preview" },
+  // ── Experimental ───────────────────────────────────────────
+  // Recognised, but Google rates accuracy as experimental. Note that
+  // Tamil is absent from this model entirely, so it is not listed.
+  { value: "bn-IN", label: "Bengali (India)", description: "Experimental" },
+  {
+    value: "bn-BD",
+    label: "Bengali (Bangladesh)",
+    description: "Experimental",
+  },
+  { value: "te-IN", label: "Telugu", description: "Experimental" },
+  { value: "mr-IN", label: "Marathi", description: "Experimental" },
+  { value: "gu-IN", label: "Gujarati", description: "Experimental" },
+  { value: "kn-IN", label: "Kannada", description: "Experimental" },
+  { value: "ml-IN", label: "Malayalam", description: "Experimental" },
+  { value: "pa-IN", label: "Punjabi", description: "Experimental" },
+  {
+    value: "pa-Guru-IN",
+    label: "Punjabi (Gurmukhi)",
+    description: "Experimental",
+  },
+  { value: "or-IN", label: "Oriya", description: "Experimental" },
+  { value: "as-IN", label: "Assamese", description: "Experimental" },
+  { value: "sd-Arab-IN", label: "Sindhi (Arabic)", description: "Experimental" },
+  { value: "ne-NP", label: "Nepali", description: "Experimental" },
+  { value: "ar-EG", label: "Arabic (Egypt)", description: "Experimental" },
+  { value: "fa-IR", label: "Farsi", description: "Experimental" },
+  { value: "he-IL", label: "Hebrew", description: "Experimental" },
+  { value: "id-ID", label: "Indonesian", description: "Experimental" },
+  { value: "jv-ID", label: "Javanese", description: "Experimental" },
+  { value: "ms-MY", label: "Malay", description: "Experimental" },
+  { value: "fil-PH", label: "Filipino", description: "Experimental" },
+  { value: "ceb", label: "Cebuano", description: "Experimental" },
+  { value: "th-TH", label: "Thai", description: "Experimental" },
+  { value: "km-KH", label: "Khmer", description: "Experimental" },
+  { value: "my-MM", label: "Burmese", description: "Experimental" },
+  {
+    value: "yue-Hant-HK",
+    label: "Cantonese (Traditional)",
+    description: "Experimental",
+  },
+  { value: "cs-CZ", label: "Czech", description: "Experimental" },
+  { value: "sk-SK", label: "Slovak", description: "Experimental" },
+  { value: "sl-SI", label: "Slovenian", description: "Experimental" },
+  { value: "hu-HU", label: "Hungarian", description: "Experimental" },
+  { value: "bg-BG", label: "Bulgarian", description: "Experimental" },
+  {
+    value: "rup-BG",
+    label: "Bulgarian (Aromanian)",
+    description: "Experimental",
+  },
+  { value: "sr-RS", label: "Serbian", description: "Experimental" },
+  { value: "bs-BA", label: "Bosnian", description: "Experimental" },
+  { value: "mk-MK", label: "Macedonian", description: "Experimental" },
+  { value: "et-EE", label: "Estonian", description: "Experimental" },
+  { value: "lv-LV", label: "Latvian", description: "Experimental" },
+  { value: "lt-LT", label: "Lithuanian", description: "Experimental" },
+  { value: "be-BY", label: "Belarusian", description: "Experimental" },
+  { value: "nb-NO", label: "Norwegian", description: "Experimental" },
+  { value: "is-IS", label: "Icelandic", description: "Experimental" },
+  { value: "gl-ES", label: "Galician", description: "Experimental" },
+  {
+    value: "es-419",
+    label: "Spanish (Latin America)",
+    description: "Experimental",
+  },
+  { value: "mt-MT", label: "Maltese", description: "Experimental" },
+  { value: "hy-AM", label: "Armenian", description: "Experimental" },
+  { value: "ka-GE", label: "Georgian", description: "Experimental" },
+  { value: "az-AZ", label: "Azerbaijani", description: "Experimental" },
+  { value: "kk-KZ", label: "Kazakh", description: "Experimental" },
+  { value: "ky-KG", label: "Kyrgyz", description: "Experimental" },
+  { value: "uz-UZ", label: "Uzbek", description: "Experimental" },
+  { value: "tg-TJ", label: "Tajik", description: "Experimental" },
+  { value: "mn-MN", label: "Mongolian", description: "Experimental" },
+  { value: "af-ZA", label: "Afrikaans", description: "Experimental" },
+  { value: "am-ET", label: "Amharic", description: "Experimental" },
+  { value: "sw-KE", label: "Swahili (Kenya)", description: "Experimental" },
+  { value: "ha-NG", label: "Hausa", description: "Experimental" },
+  { value: "ln-CD", label: "Lingala", description: "Experimental" },
+  { value: "kea-CV", label: "Kabuverdianu", description: "Experimental" },
 ];
-
-// Multi-language code-switching only works with GA languages on Chirp 3.
-// Preview languages (te-IN, ta-IN, etc.) cause "Invalid argument" when
-// combined with other languages. They work fine as single-language selection.
-const MULTI_LANGUAGE_OPTIONS = LANGUAGE_OPTIONS.filter(
-  (o) => o.value !== "auto" && o.description === "GA",
-);
 
 const MIC_FALLBACK: MicDevice[] = [
   { id: "", name: "System default microphone", isDefault: true },
@@ -323,14 +327,8 @@ export default function SettingsPage() {
 
   // When the user changes the language in the Transcription group,
   // immediately tell Rust so the next dictation uses the right locale.
-  // Also: if switching FROM "auto" to a specific language, clear the
-  // multi-language codes (they only apply when language = "auto").
   const handleLanguageChange = (language: string) => {
-    if (language !== "auto" && settings.multiLanguageCodes.length > 0) {
-      update({ language, multiLanguageCodes: [] });
-    } else {
-      update({ language });
-    }
+    update({ language });
     invoke("cmd_update_language", { languageCode: language }).catch((e) =>
       console.warn("[popo] cmd_update_language failed:", e),
     );
@@ -373,13 +371,10 @@ export default function SettingsPage() {
     : [{ value: "mode-auto", label: "Auto" }];
 
   return (
-    <div
-      style={{
-        padding: "var(--sp-8) var(--sp-10)",
-        maxWidth: 680,
-        margin: "0 auto",
-      }}
-    >
+    <PageShell
+      maxWidth={680}
+      header={
+        <>
       <h1
         style={{
           fontFamily: "var(--font-pixel-square)",
@@ -392,6 +387,9 @@ export default function SettingsPage() {
       >
         Settings
       </h1>
+        </>
+      }
+    >
 
       {/* ── RECORDING ────────────────────────────── */}
       <SettingsGroup label="Recording" first>
@@ -476,27 +474,6 @@ export default function SettingsPage() {
           />
         </SettingRow>
 
-        {settings.language === "auto" && (
-          <SettingRow
-            label="Restrict to"
-            description={
-              settings.multiLanguageCodes.length > 0
-                ? "Faster than scanning all 125."
-                : "Pick up to 3. Empty = all languages."
-            }
-          >
-            <MultiSelect
-              values={settings.multiLanguageCodes}
-              options={MULTI_LANGUAGE_OPTIONS}
-              onChange={(codes) => update({ multiLanguageCodes: codes })}
-              placeholder="All languages"
-              maxSelections={3}
-              minWidth={260}
-              aria-label="Restrict detection"
-            />
-          </SettingRow>
-        )}
-
         <SettingRow
           label="Auto-format"
           hint={
@@ -532,40 +509,11 @@ export default function SettingsPage() {
           </SettingRow>
         )}
 
-        <SettingRow
-          label="Response speed"
-          hint="How quickly popo decides you're done speaking. Snappier responses mean faster paste but can truncate slow speech."
-        >
-          <Select
-            value={settings.endpointing}
-            options={[
-              { value: "low", label: "Patient (longer pauses)" },
-              { value: "standard", label: "Standard" },
-              { value: "high", label: "Snappy (shorter pauses)" },
-            ]}
-            onChange={(v) =>
-              update({ endpointing: v as "low" | "standard" | "high" })
-            }
-            aria-label="Response speed"
-            minWidth={180}
-          />
-        </SettingRow>
 
         {/* AI provider (AI Studio vs Vertex AI) + key/region + a
             single connection test. Lives in its own component so the
             rows stay tidy and the Vertex setup guide has a home. */}
         {settings.autoFormat && <GeminiSetup />}
-
-
-        {/*
-          Phase C spoken-punctuation / spoken-emoji / profanity-filter
-          toggles are HIDDEN (Session 28). Chirp 3 doesn't support
-          these RecognitionFeatures fields — setting them to true
-          makes the gRPC request fail with "Invalid argument". The
-          frontend state + Rust commands are preserved so we can
-          re-expose these the moment they gain Chirp 3 support, OR
-          when we add a Chirp-2 fallback model.
-        */}
       </SettingsGroup>
 
       {/* ── PASTE ──────────────────────────────── */}
@@ -705,7 +653,7 @@ export default function SettingsPage() {
 
       {/* Bottom breathing room so last row doesn't hug the viewport bottom */}
       <div style={{ height: "var(--sp-12)" }} />
-    </div>
+    </PageShell>
   );
 }
 

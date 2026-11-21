@@ -81,7 +81,7 @@ const MAX_BUFFER_SAMPLES: usize = 48_000 * 180; // 3 minutes
 ///     → boosted peak 0.04–0.4 (well-leveled).
 ///   - External condenser mic raw peak: 0.05–0.3
 ///     → boosted peak 0.4–1.0+ (peaks soft-clip at 1.0; voice
-///     intelligibility preserved — Chirp is robust to mild peak
+///     intelligibility preserved — the speech model is robust to mild peak
 ///     clipping on speech).
 ///
 /// The hard clamp `(sample * GAIN).clamp(-1.0, 1.0)` prevents
